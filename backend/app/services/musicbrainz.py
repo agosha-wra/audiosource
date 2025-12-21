@@ -63,6 +63,56 @@ class MusicBrainzService:
             return None
 
     @classmethod
+    def search_releases_multi(
+        cls,
+        query: str,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for releases in MusicBrainz and return multiple results.
+        Used for the search feature.
+        """
+        cls._rate_limit()
+
+        try:
+            result = musicbrainzngs.search_release_groups(
+                query=query,
+                limit=limit
+            )
+
+            release_groups = result.get("release-group-list", [])
+            results = []
+            
+            for rg in release_groups:
+                # Extract artist info
+                artist_credit = rg.get("artist-credit", [])
+                artist_name = None
+                artist_mbid = None
+                if artist_credit:
+                    first_artist = artist_credit[0]
+                    if isinstance(first_artist, dict):
+                        artist = first_artist.get("artist", first_artist)
+                        artist_name = artist.get("name")
+                        artist_mbid = artist.get("id")
+                
+                rg_id = rg.get("id")
+                results.append({
+                    "musicbrainz_id": rg_id,
+                    "title": rg.get("title"),
+                    "artist_name": artist_name,
+                    "artist_musicbrainz_id": artist_mbid,
+                    "release_date": rg.get("first-release-date", ""),
+                    "release_type": rg.get("primary-type", "Album"),
+                    "cover_art_url": cls.get_release_group_cover_art_url(rg_id) if rg_id else None,
+                })
+            
+            return results
+
+        except Exception as e:
+            print(f"MusicBrainz search error: {e}")
+            return []
+
+    @classmethod
     def get_release_details(cls, musicbrainz_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a specific release."""
         cls._rate_limit()

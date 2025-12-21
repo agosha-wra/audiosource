@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest } from './types';
 
 const API_BASE = '/api';
 
@@ -51,5 +51,29 @@ export async function startScan(forceRescan = false): Promise<ScanStatus> {
 
 export async function getScanStatus(): Promise<ScanStatus> {
   return fetchApi<ScanStatus>('/scan/status');
+}
+
+// Wishlist
+export async function getWishlist(): Promise<Album[]> {
+  return fetchApi<Album[]>('/wishlist');
+}
+
+export async function addToWishlist(request: WishlistAddRequest): Promise<Album> {
+  return fetchApi<Album>('/wishlist', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function removeFromWishlist(albumId: number): Promise<void> {
+  await fetchApi<void>(`/wishlist/${albumId}`, {
+    method: 'DELETE',
+  });
+}
+
+// MusicBrainz Search
+export async function searchMusicBrainz(query: string): Promise<MusicBrainzSearchResult[]> {
+  if (!query || query.length < 2) return [];
+  return fetchApi<MusicBrainzSearchResult[]>(`/search/musicbrainz?q=${encodeURIComponent(query)}`);
 }
 

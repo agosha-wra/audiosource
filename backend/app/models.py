@@ -33,6 +33,7 @@ class Album(Base):
     folder_path = Column(Text, nullable=True, unique=True)  # NULL for missing albums
     track_count = Column(Integer, nullable=True)
     is_owned = Column(Boolean, default=True)  # True if we have it locally
+    is_wishlisted = Column(Boolean, default=False)  # True if user wants this album
     is_scanned = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

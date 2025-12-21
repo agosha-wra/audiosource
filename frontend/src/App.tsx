@@ -5,15 +5,19 @@ import Sidebar from './components/Sidebar';
 import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
 import ArtistDetailView from './components/ArtistDetailView';
+import WishlistView from './components/WishlistView';
 import AlbumModal from './components/AlbumModal';
+import SearchModal from './components/SearchModal';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('albums');
   const [currentArtistId, setCurrentArtistId] = useState<number | null>(null);
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
-  const [stats, setStats] = useState<Stats>({ album_count: 0, missing_album_count: 0, artist_count: 0 });
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [stats, setStats] = useState<Stats>({ album_count: 0, missing_album_count: 0, wishlist_count: 0, artist_count: 0 });
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [wishlistKey, setWishlistKey] = useState(0);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -86,6 +90,19 @@ function App() {
     setCurrentArtistId(null);
   };
 
+  const handleOpenSearch = () => {
+    setShowSearchModal(true);
+  };
+
+  const handleCloseSearch = () => {
+    setShowSearchModal(false);
+  };
+
+  const handleAlbumAddedToWishlist = () => {
+    refreshStats();
+    setWishlistKey(prev => prev + 1);
+  };
+
   return (
     <div className="app">
       <Sidebar
@@ -113,14 +130,28 @@ function App() {
             onAlbumClick={handleAlbumClick}
           />
         )}
+
+        {currentView === 'wishlist' && (
+          <WishlistView 
+            key={wishlistKey}
+            onAlbumClick={handleAlbumClick}
+            onOpenSearch={handleOpenSearch}
+          />
+        )}
       </main>
 
       {selectedAlbumId !== null && (
         <AlbumModal albumId={selectedAlbumId} onClose={handleCloseModal} />
+      )}
+
+      {showSearchModal && (
+        <SearchModal 
+          onClose={handleCloseSearch}
+          onAlbumAdded={handleAlbumAddedToWishlist}
+        />
       )}
     </div>
   );
 }
 
 export default App;
-

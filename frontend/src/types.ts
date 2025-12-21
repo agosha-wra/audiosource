@@ -19,6 +19,7 @@ export interface Album {
   cover_art_url: string | null;
   track_count: number | null;
   is_owned: boolean;
+  is_wishlisted: boolean;
   is_scanned: boolean;
   created_at: string;
   artist: Artist | null;
@@ -49,8 +50,33 @@ export interface ScanStatus {
 export interface Stats {
   album_count: number;
   missing_album_count: number;
+  wishlist_count: number;
   artist_count: number;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail';
+export interface MusicBrainzSearchResult {
+  musicbrainz_id: string;
+  title: string;
+  artist_name: string | null;
+  artist_musicbrainz_id: string | null;
+  release_date: string | null;
+  release_type: string | null;
+  cover_art_url: string | null;
+  existing_album_id: number | null;
+  is_owned: boolean;
+  is_wishlisted: boolean;
+}
+
+export interface WishlistAddRequest {
+  album_id?: number;
+  musicbrainz_id?: string;
+  title?: string;
+  artist_name?: string;
+  artist_musicbrainz_id?: string;
+  release_date?: string;
+  release_type?: string;
+  cover_art_url?: string;
+}
+
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist';
 

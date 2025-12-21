@@ -18,8 +18,11 @@ from app.schemas import (
     ScanRequest,
     ScanScheduleResponse,
     ScanScheduleUpdate,
+    WishlistAddRequest,
+    MusicBrainzSearchResult,
 )
 from app.services.scanner import ScannerService
+from app.services.musicbrainz import MusicBrainzService
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -321,10 +324,134 @@ def get_stats(db: Session = Depends(get_db)):
     """Get library statistics."""
     owned_album_count = db.query(Album).filter(Album.is_owned == True).count()
     missing_album_count = db.query(Album).filter(Album.is_owned == False).count()
+    wishlisted_count = db.query(Album).filter(Album.is_wishlisted == True).count()
     artist_count = db.query(Artist).count()
 
     return {
         "album_count": owned_album_count,
         "missing_album_count": missing_album_count,
+        "wishlist_count": wishlisted_count,
         "artist_count": artist_count,
     }
+
+
+# ============ Wishlist Endpoints ============
+
+@app.get("/api/wishlist", response_model=List[AlbumResponse])
+def get_wishlist(db: Session = Depends(get_db)):
+    """Get all wishlisted albums."""
+    albums = db.query(Album).filter(Album.is_wishlisted == True).order_by(Album.title).all()
+    return albums
+
+
+@app.post("/api/wishlist", response_model=AlbumResponse)
+def add_to_wishlist(request: WishlistAddRequest, db: Session = Depends(get_db)):
+    """Add an album to the wishlist."""
+    
+    # If album_id is provided, just mark existing album as wishlisted
+    if request.album_id:
+        album = db.query(Album).filter(Album.id == request.album_id).first()
+        if not album:
+            raise HTTPException(status_code=404, detail="Album not found")
+        album.is_wishlisted = True
+        db.commit()
+        db.refresh(album)
+        return album
+    
+    # Otherwise, create new album from MusicBrainz data
+    if not request.musicbrainz_id:
+        raise HTTPException(status_code=400, detail="Either album_id or musicbrainz_id is required")
+    
+    # Check if album already exists by MusicBrainz ID
+    existing = db.query(Album).filter(Album.musicbrainz_id == request.musicbrainz_id).first()
+    if existing:
+        existing.is_wishlisted = True
+        db.commit()
+        db.refresh(existing)
+        return existing
+    
+    # Get or create artist
+    artist = None
+    if request.artist_musicbrainz_id:
+        artist = db.query(Artist).filter(Artist.musicbrainz_id == request.artist_musicbrainz_id).first()
+        if not artist and request.artist_name:
+            artist = Artist(
+                name=request.artist_name,
+                musicbrainz_id=request.artist_musicbrainz_id
+            )
+            db.add(artist)
+            db.commit()
+            db.refresh(artist)
+    elif request.artist_name:
+        artist = db.query(Artist).filter(Artist.name == request.artist_name).first()
+        if not artist:
+            artist = Artist(name=request.artist_name)
+            db.add(artist)
+            db.commit()
+            db.refresh(artist)
+    
+    # Create new album
+    album = Album(
+        title=request.title or "Unknown Album",
+        musicbrainz_id=request.musicbrainz_id,
+        artist_id=artist.id if artist else None,
+        release_date=request.release_date,
+        release_type=request.release_type,
+        cover_art_url=request.cover_art_url,
+        is_owned=False,
+        is_wishlisted=True,
+        is_scanned=True
+    )
+    db.add(album)
+    db.commit()
+    db.refresh(album)
+    
+    return album
+
+
+@app.delete("/api/wishlist/{album_id}")
+def remove_from_wishlist(album_id: int, db: Session = Depends(get_db)):
+    """Remove an album from the wishlist."""
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    album.is_wishlisted = False
+    db.commit()
+    
+    return {"message": "Removed from wishlist"}
+
+
+# ============ MusicBrainz Search ============
+
+@app.get("/api/search/musicbrainz", response_model=List[MusicBrainzSearchResult])
+def search_musicbrainz(q: str, db: Session = Depends(get_db)):
+    """Search MusicBrainz for albums."""
+    if not q or len(q) < 2:
+        return []
+    
+    # Search MusicBrainz
+    results = MusicBrainzService.search_releases_multi(q, limit=20)
+    
+    # Check which ones we already have
+    response = []
+    for result in results:
+        mbid = result.get("musicbrainz_id")
+        existing = None
+        if mbid:
+            existing = db.query(Album).filter(Album.musicbrainz_id == mbid).first()
+        
+        response.append(MusicBrainzSearchResult(
+            musicbrainz_id=result.get("musicbrainz_id", ""),
+            title=result.get("title", "Unknown"),
+            artist_name=result.get("artist_name"),
+            artist_musicbrainz_id=result.get("artist_musicbrainz_id"),
+            release_date=result.get("release_date"),
+            release_type=result.get("release_type"),
+            cover_art_url=result.get("cover_art_url"),
+            existing_album_id=existing.id if existing else None,
+            is_owned=existing.is_owned if existing else False,
+            is_wishlisted=existing.is_wishlisted if existing else False,
+        ))
+    
+    return response

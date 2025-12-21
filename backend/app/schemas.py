@@ -57,6 +57,7 @@ class AlbumResponse(AlbumBase):
     folder_path: Optional[str] = None
     cover_art_url: Optional[str] = None
     is_owned: bool = True
+    is_wishlisted: bool = False
     is_scanned: bool
     created_at: datetime
     artist: Optional[ArtistResponse] = None
@@ -104,3 +105,31 @@ class ScanScheduleResponse(BaseModel):
 class ScanScheduleUpdate(BaseModel):
     enabled: Optional[bool] = None
     interval_hours: Optional[int] = None
+
+
+# Wishlist schemas
+class WishlistAddRequest(BaseModel):
+    album_id: Optional[int] = None  # For existing albums
+    # For new albums from MusicBrainz search
+    musicbrainz_id: Optional[str] = None
+    title: Optional[str] = None
+    artist_name: Optional[str] = None
+    artist_musicbrainz_id: Optional[str] = None
+    release_date: Optional[str] = None
+    release_type: Optional[str] = None
+    cover_art_url: Optional[str] = None
+
+
+# MusicBrainz search schemas
+class MusicBrainzSearchResult(BaseModel):
+    musicbrainz_id: str
+    title: str
+    artist_name: Optional[str] = None
+    artist_musicbrainz_id: Optional[str] = None
+    release_date: Optional[str] = None
+    release_type: Optional[str] = None
+    cover_art_url: Optional[str] = None
+    # Check if already in our DB
+    existing_album_id: Optional[int] = None
+    is_owned: bool = False
+    is_wishlisted: bool = False
