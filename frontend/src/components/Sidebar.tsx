@@ -1,15 +1,28 @@
-import type { View, Stats, ScanStatus } from '../types';
+import type { View, Stats, ScanStatus, UpcomingStatus } from '../types';
 
 interface SidebarProps {
   currentView: View;
   stats: Stats;
   scanStatus: ScanStatus | null;
+  upcomingStatus: UpcomingStatus | null;
   isScanning: boolean;
+  isCheckingUpcoming: boolean;
   onNavigate: (view: View) => void;
   onScan: () => void;
+  onCheckUpcoming: () => void;
 }
 
-export default function Sidebar({ currentView, stats, scanStatus, isScanning, onNavigate, onScan }: SidebarProps) {
+export default function Sidebar({ 
+  currentView, 
+  stats, 
+  scanStatus, 
+  upcomingStatus,
+  isScanning, 
+  isCheckingUpcoming,
+  onNavigate, 
+  onScan,
+  onCheckUpcoming
+}: SidebarProps) {
   const progress = scanStatus && scanStatus.total_folders > 0
     ? (scanStatus.scanned_folders / scanStatus.total_folders) * 100
     : 0;
@@ -37,7 +50,7 @@ export default function Sidebar({ currentView, stats, scanStatus, isScanning, on
             <rect x="3" y="14" width="7" height="7" rx="1"/>
             <rect x="14" y="14" width="7" height="7" rx="1"/>
           </svg>
-          Albums
+          <span>Albums</span>
         </a>
         <a
           href="#"
@@ -48,7 +61,7 @@ export default function Sidebar({ currentView, stats, scanStatus, isScanning, on
             <circle cx="12" cy="8" r="4"/>
             <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
           </svg>
-          Artists
+          <span>Artists</span>
         </a>
         <a
           href="#"
@@ -58,7 +71,7 @@ export default function Sidebar({ currentView, stats, scanStatus, isScanning, on
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>
-          Wishlist
+          <span>Wishlist</span>
           {stats.wishlist_count > 0 && (
             <span className="nav-badge">{stats.wishlist_count}</span>
           )}
@@ -77,26 +90,51 @@ export default function Sidebar({ currentView, stats, scanStatus, isScanning, on
           </div>
         </div>
         
-        {!isScanning ? (
-          <button className="scan-btn" onClick={onScan}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              <path d="M12 8v4l2 2"/>
-            </svg>
-            <span>Scan Library</span>
-          </button>
-        ) : (
+        {isScanning ? (
           <div className="scan-status">
             <div className="scan-progress">
               <div className="scan-progress-bar" style={{ width: `${progress}%` }} />
             </div>
             <span className="scan-text">
               {scanStatus?.status === 'scanning'
-                ? `Scanning ${scanStatus.scanned_folders}/${scanStatus.total_folders} folders...`
+                ? `Scanning ${scanStatus.scanned_folders}/${scanStatus.total_folders}...`
                 : scanStatus?.status === 'completed'
                 ? 'Scan completed!'
                 : 'Starting scan...'}
             </span>
+          </div>
+        ) : isCheckingUpcoming ? (
+          <div className="scan-status">
+            <div className="scan-progress">
+              <div 
+                className="scan-progress-bar upcoming" 
+                style={{ 
+                  width: upcomingStatus?.total_artists 
+                    ? `${(upcomingStatus.artists_checked / upcomingStatus.total_artists) * 100}%` 
+                    : '0%' 
+                }} 
+              />
+            </div>
+            <span className="scan-text">
+              Checking {upcomingStatus?.artists_checked || 0}/{upcomingStatus?.total_artists || 0} artists...
+            </span>
+          </div>
+        ) : (
+          <div className="sidebar-buttons">
+            <button className="scan-btn" onClick={onScan}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                <path d="M12 8v4l2 2"/>
+              </svg>
+              <span>Scan Library</span>
+            </button>
+            <button className="upcoming-sidebar-btn" onClick={onCheckUpcoming}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12,6 12,12 16,14"/>
+              </svg>
+              <span>Check Upcoming</span>
+            </button>
           </div>
         )}
       </div>

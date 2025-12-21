@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { View, Stats, ScanStatus } from './types';
-import { getStats, getScanStatus, startScan } from './api';
+import type { View, Stats, ScanStatus, UpcomingStatus } from './types';
+import { getStats, getScanStatus, startScan, checkUpcomingReleases, getUpcomingStatus } from './api';
 import Sidebar from './components/Sidebar';
 import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
@@ -16,7 +16,9 @@ function App() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [stats, setStats] = useState<Stats>({ album_count: 0, missing_album_count: 0, wishlist_count: 0, artist_count: 0 });
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
+  const [upcomingStatus, setUpcomingStatus] = useState<UpcomingStatus | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [isCheckingUpcoming, setIsCheckingUpcoming] = useState(false);
   const [wishlistKey, setWishlistKey] = useState(0);
 
   const refreshStats = useCallback(async () => {
@@ -39,10 +41,22 @@ function App() {
     }
   }, []);
 
+  const fetchUpcomingStatus = useCallback(async () => {
+    try {
+      const status = await getUpcomingStatus();
+      setUpcomingStatus(status);
+      return status;
+    } catch (error) {
+      console.error('Error fetching upcoming status:', error);
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     refreshStats();
     checkScanStatus();
-  }, [refreshStats, checkScanStatus]);
+    fetchUpcomingStatus();
+  }, [refreshStats, checkScanStatus, fetchUpcomingStatus]);
 
   useEffect(() => {
     if (!isScanning) return;
@@ -58,12 +72,36 @@ function App() {
     return () => clearInterval(interval);
   }, [isScanning, checkScanStatus, refreshStats]);
 
+  useEffect(() => {
+    if (!isCheckingUpcoming) return;
+
+    const interval = setInterval(async () => {
+      const status = await fetchUpcomingStatus();
+      if (status && (status.status === 'completed' || status.status === 'error' || status.status === 'idle')) {
+        setIsCheckingUpcoming(false);
+        refreshStats();
+        setWishlistKey(prev => prev + 1);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isCheckingUpcoming, fetchUpcomingStatus, refreshStats]);
+
   const handleScan = async () => {
     try {
       await startScan(false);
       setIsScanning(true);
     } catch (error) {
       console.error('Error starting scan:', error);
+    }
+  };
+
+  const handleCheckUpcoming = async () => {
+    try {
+      await checkUpcomingReleases();
+      setIsCheckingUpcoming(true);
+    } catch (error) {
+      console.error('Error starting upcoming check:', error);
     }
   };
 
@@ -109,9 +147,12 @@ function App() {
         currentView={currentView}
         stats={stats}
         scanStatus={scanStatus}
+        upcomingStatus={upcomingStatus}
         isScanning={isScanning}
+        isCheckingUpcoming={isCheckingUpcoming}
         onNavigate={handleNavigate}
         onScan={handleScan}
+        onCheckUpcoming={handleCheckUpcoming}
       />
       
       <main className="main">

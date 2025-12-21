@@ -225,6 +225,44 @@ body::before {
   color: var(--text-secondary);
 }
 
+.scan-progress-bar.upcoming {
+  background: #22c55e;
+}
+
+/* Sidebar buttons container */
+.sidebar-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upcoming-sidebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.upcoming-sidebar-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.upcoming-sidebar-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Main Content */
 .main {
   display: flex;
