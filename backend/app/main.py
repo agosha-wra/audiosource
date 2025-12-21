@@ -1,17 +1,23 @@
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
+from sqlalchemy import func
+from typing import List, Optional
+from datetime import datetime, timedelta
 import threading
+import asyncio
 
 from app.database import get_db, engine, Base, SessionLocal
-from app.models import Album, Artist, ScanStatus
+from app.models import Album, Artist, ScanStatus, ScanSchedule
 from app.schemas import (
     AlbumResponse,
     AlbumDetailResponse,
     ArtistResponse,
+    ArtistDetailResponse,
     ScanStatusResponse,
     ScanRequest,
+    ScanScheduleResponse,
+    ScanScheduleUpdate,
 )
 from app.services.scanner import ScannerService
 
@@ -36,6 +42,7 @@ app.add_middleware(
 
 # Background scan lock
 _scan_lock = threading.Lock()
+_scheduler_running = False
 
 
 def run_scan_in_background(force_rescan: bool):
@@ -49,6 +56,74 @@ def run_scan_in_background(force_rescan: bool):
         db.close()
 
 
+async def scheduled_scan_loop():
+    """Background loop that checks for scheduled scans."""
+    global _scheduler_running
+    _scheduler_running = True
+    
+    while _scheduler_running:
+        try:
+            db = SessionLocal()
+            try:
+                schedule = db.query(ScanSchedule).first()
+                if schedule and schedule.enabled:
+                    now = datetime.utcnow()
+                    
+                    # Check if it's time for a scan
+                    if schedule.next_scan_at and now >= schedule.next_scan_at:
+                        # Check if not already scanning
+                        status = db.query(ScanStatus).first()
+                        if not status or status.status != "scanning":
+                            print(f"Starting scheduled scan at {now}")
+                            # Run scan in background thread
+                            thread = threading.Thread(
+                                target=run_scan_in_background,
+                                args=(False,)
+                            )
+                            thread.start()
+                            
+                            # Update schedule
+                            schedule.last_scan_at = now
+                            schedule.next_scan_at = now + timedelta(hours=schedule.interval_hours)
+                            db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"Scheduler error: {e}")
+        
+        # Check every minute
+        await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize scheduled scanning on startup."""
+    # Create default schedule if it doesn't exist
+    db = SessionLocal()
+    try:
+        schedule = db.query(ScanSchedule).first()
+        if not schedule:
+            schedule = ScanSchedule(
+                enabled=True,
+                interval_hours=24,
+                next_scan_at=datetime.utcnow() + timedelta(hours=24)
+            )
+            db.add(schedule)
+            db.commit()
+    finally:
+        db.close()
+    
+    # Start the scheduler
+    asyncio.create_task(scheduled_scan_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the scheduler on shutdown."""
+    global _scheduler_running
+    _scheduler_running = False
+
+
 @app.get("/")
 def root():
     """Root endpoint."""
@@ -59,11 +134,15 @@ def root():
 def list_albums(
     skip: int = 0,
     limit: int = 100,
-    search: str = None,
+    search: Optional[str] = None,
+    owned_only: bool = True,
     db: Session = Depends(get_db)
 ):
-    """List all albums with optional search."""
+    """List albums with optional search. By default only shows owned albums."""
     query = db.query(Album).order_by(Album.title)
+
+    if owned_only:
+        query = query.filter(Album.is_owned == True)
 
     if search:
         search_term = f"%{search}%"
@@ -82,33 +161,91 @@ def get_album(album_id: int, db: Session = Depends(get_db)):
     return album
 
 
-@app.get("/api/artists", response_model=List[ArtistResponse])
+@app.get("/api/artists", response_model=List[ArtistDetailResponse])
 def list_artists(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db)
 ):
-    """List all artists."""
+    """List all artists with album counts."""
     artists = db.query(Artist).order_by(Artist.name).offset(skip).limit(limit).all()
-    return artists
+    
+    result = []
+    for artist in artists:
+        owned_count = db.query(Album).filter(
+            Album.artist_id == artist.id,
+            Album.is_owned == True
+        ).count()
+        missing_count = db.query(Album).filter(
+            Album.artist_id == artist.id,
+            Album.is_owned == False
+        ).count()
+        
+        artist_data = ArtistDetailResponse(
+            id=artist.id,
+            name=artist.name,
+            musicbrainz_id=artist.musicbrainz_id,
+            sort_name=artist.sort_name,
+            country=artist.country,
+            created_at=artist.created_at,
+            owned_album_count=owned_count,
+            missing_album_count=missing_count
+        )
+        result.append(artist_data)
+    
+    return result
 
 
-@app.get("/api/artists/{artist_id}", response_model=ArtistResponse)
+@app.get("/api/artists/{artist_id}", response_model=ArtistDetailResponse)
 def get_artist(artist_id: int, db: Session = Depends(get_db)):
-    """Get a specific artist."""
+    """Get a specific artist with album counts."""
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
-    return artist
+    
+    owned_count = db.query(Album).filter(
+        Album.artist_id == artist.id,
+        Album.is_owned == True
+    ).count()
+    missing_count = db.query(Album).filter(
+        Album.artist_id == artist.id,
+        Album.is_owned == False
+    ).count()
+    
+    return ArtistDetailResponse(
+        id=artist.id,
+        name=artist.name,
+        musicbrainz_id=artist.musicbrainz_id,
+        sort_name=artist.sort_name,
+        country=artist.country,
+        created_at=artist.created_at,
+        owned_album_count=owned_count,
+        missing_album_count=missing_count
+    )
 
 
 @app.get("/api/artists/{artist_id}/albums", response_model=List[AlbumResponse])
-def get_artist_albums(artist_id: int, db: Session = Depends(get_db)):
-    """Get all albums for a specific artist."""
+def get_artist_albums(
+    artist_id: int,
+    owned: Optional[bool] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all albums for a specific artist.
+    Use owned=true for owned albums, owned=false for missing albums, or omit for all.
+    """
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
-    return artist.albums
+    
+    query = db.query(Album).filter(Album.artist_id == artist_id)
+    
+    if owned is not None:
+        query = query.filter(Album.is_owned == owned)
+    
+    # Sort: owned albums first, then by release date
+    albums = query.order_by(Album.is_owned.desc(), Album.release_date.desc()).all()
+    return albums
 
 
 @app.post("/api/scan", response_model=ScanStatusResponse)
@@ -143,13 +280,51 @@ def get_scan_status(db: Session = Depends(get_db)):
     return scanner.get_or_create_scan_status()
 
 
+@app.get("/api/scan/schedule", response_model=ScanScheduleResponse)
+def get_scan_schedule(db: Session = Depends(get_db)):
+    """Get the scan schedule settings."""
+    schedule = db.query(ScanSchedule).first()
+    if not schedule:
+        schedule = ScanSchedule(enabled=True, interval_hours=24)
+        db.add(schedule)
+        db.commit()
+        db.refresh(schedule)
+    return schedule
+
+
+@app.put("/api/scan/schedule", response_model=ScanScheduleResponse)
+def update_scan_schedule(
+    update: ScanScheduleUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update the scan schedule settings."""
+    schedule = db.query(ScanSchedule).first()
+    if not schedule:
+        schedule = ScanSchedule(enabled=True, interval_hours=24)
+        db.add(schedule)
+    
+    if update.enabled is not None:
+        schedule.enabled = update.enabled
+    if update.interval_hours is not None:
+        schedule.interval_hours = update.interval_hours
+        # Update next scan time
+        if schedule.enabled:
+            schedule.next_scan_at = datetime.utcnow() + timedelta(hours=update.interval_hours)
+    
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
 @app.get("/api/stats")
 def get_stats(db: Session = Depends(get_db)):
     """Get library statistics."""
-    album_count = db.query(Album).count()
+    owned_album_count = db.query(Album).filter(Album.is_owned == True).count()
+    missing_album_count = db.query(Album).filter(Album.is_owned == False).count()
     artist_count = db.query(Artist).count()
 
     return {
-        "album_count": album_count,
+        "album_count": owned_album_count,
+        "missing_album_count": missing_album_count,
         "artist_count": artist_count,
     }

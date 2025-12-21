@@ -13,6 +13,7 @@ class Artist(Base):
     sort_name = Column(String(500), nullable=True)
     disambiguation = Column(Text, nullable=True)
     country = Column(String(100), nullable=True)
+    discography_fetched = Column(Boolean, default=False)  # True if we've fetched all albums
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -29,8 +30,9 @@ class Album(Base):
     release_date = Column(String(50), nullable=True)
     release_type = Column(String(100), nullable=True)  # Album, EP, Single, etc.
     cover_art_url = Column(Text, nullable=True)
-    folder_path = Column(Text, nullable=False, unique=True)
+    folder_path = Column(Text, nullable=True, unique=True)  # NULL for missing albums
     track_count = Column(Integer, nullable=True)
+    is_owned = Column(Boolean, default=True)  # True if we have it locally
     is_scanned = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -68,3 +70,12 @@ class ScanStatus(Base):
     completed_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
 
+
+class ScanSchedule(Base):
+    __tablename__ = "scan_schedule"
+
+    id = Column(Integer, primary_key=True, index=True)
+    enabled = Column(Boolean, default=True)
+    interval_hours = Column(Integer, default=24)  # Scan every N hours
+    last_scan_at = Column(DateTime, nullable=True)
+    next_scan_at = Column(DateTime, nullable=True)

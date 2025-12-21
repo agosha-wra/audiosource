@@ -18,6 +18,16 @@ class ArtistResponse(ArtistBase):
         from_attributes = True
 
 
+class ArtistDetailResponse(ArtistBase):
+    id: int
+    created_at: datetime
+    owned_album_count: int = 0
+    missing_album_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 class TrackBase(BaseModel):
     title: str
     track_number: Optional[int] = None
@@ -44,8 +54,9 @@ class AlbumBase(BaseModel):
 class AlbumResponse(AlbumBase):
     id: int
     musicbrainz_id: Optional[str] = None
-    folder_path: str
+    folder_path: Optional[str] = None
     cover_art_url: Optional[str] = None
+    is_owned: bool = True
     is_scanned: bool
     created_at: datetime
     artist: Optional[ArtistResponse] = None
@@ -78,3 +89,18 @@ class ScanStatusResponse(BaseModel):
 class ScanRequest(BaseModel):
     force_rescan: bool = False
 
+
+class ScanScheduleResponse(BaseModel):
+    id: int
+    enabled: bool
+    interval_hours: int
+    last_scan_at: Optional[datetime] = None
+    next_scan_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ScanScheduleUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    interval_hours: Optional[int] = None

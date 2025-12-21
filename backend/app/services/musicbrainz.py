@@ -1,6 +1,6 @@
 import musicbrainzngs
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from app.config import get_settings
 
 settings = get_settings()
@@ -84,6 +84,11 @@ class MusicBrainzService:
         return f"https://coverartarchive.org/release/{musicbrainz_id}/front-250"
 
     @classmethod
+    def get_release_group_cover_art_url(cls, release_group_id: str) -> Optional[str]:
+        """Get the cover art URL for a release group."""
+        return f"https://coverartarchive.org/release-group/{release_group_id}/front-250"
+
+    @classmethod
     def search_artist(cls, artist_name: str) -> Optional[Dict[str, Any]]:
         """Search for an artist in MusicBrainz."""
         cls._rate_limit()
@@ -99,6 +104,90 @@ class MusicBrainzService:
             return artists[0]
         except Exception as e:
             print(f"MusicBrainz artist search error: {e}")
+            return None
+
+    @classmethod
+    def get_artist_releases(
+        cls,
+        artist_musicbrainz_id: str,
+        release_types: List[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all release groups (albums) by an artist from MusicBrainz.
+        
+        Args:
+            artist_musicbrainz_id: The MusicBrainz ID of the artist
+            release_types: List of release types to include (e.g., ["album", "ep"])
+                          If None, defaults to ["album", "ep"]
+        
+        Returns:
+            List of release group information dictionaries
+        """
+        if release_types is None:
+            release_types = ["album", "ep"]
+        
+        all_releases = []
+        offset = 0
+        limit = 100  # Max allowed by MusicBrainz
+        
+        while True:
+            cls._rate_limit()
+            
+            try:
+                result = musicbrainzngs.browse_release_groups(
+                    artist=artist_musicbrainz_id,
+                    release_type=release_types,
+                    limit=limit,
+                    offset=offset
+                )
+                
+                release_groups = result.get("release-group-list", [])
+                if not release_groups:
+                    break
+                
+                for rg in release_groups:
+                    release_info = cls._extract_release_group_info(rg)
+                    if release_info:
+                        all_releases.append(release_info)
+                
+                # Check if we've fetched all releases
+                total = int(result.get("release-group-count", 0))
+                offset += len(release_groups)
+                
+                if offset >= total:
+                    break
+                    
+            except Exception as e:
+                print(f"MusicBrainz get artist releases error: {e}")
+                break
+        
+        return all_releases
+
+    @classmethod
+    def _extract_release_group_info(cls, release_group: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract information from a release group."""
+        try:
+            rg_id = release_group.get("id")
+            title = release_group.get("title")
+            
+            if not rg_id or not title:
+                return None
+            
+            # Get the primary type (Album, EP, Single, etc.)
+            primary_type = release_group.get("primary-type", "Album")
+            
+            # Get first release date
+            first_release_date = release_group.get("first-release-date", "")
+            
+            return {
+                "musicbrainz_id": rg_id,
+                "title": title,
+                "release_type": primary_type,
+                "release_date": first_release_date,
+                "cover_art_url": cls.get_release_group_cover_art_url(rg_id),
+            }
+        except Exception as e:
+            print(f"Error extracting release group info: {e}")
             return None
 
     @classmethod
@@ -126,6 +215,7 @@ class MusicBrainzService:
         release_group = release.get("release-group", {})
         if release_group:
             info["release_type"] = release_group.get("primary-type", "Album")
+            info["release_group_id"] = release_group.get("id")
 
         # Track count from medium list
         medium_list = release.get("medium-list", [])
@@ -136,4 +226,3 @@ class MusicBrainzService:
         info["track_count"] = track_count if track_count > 0 else None
 
         return info
-

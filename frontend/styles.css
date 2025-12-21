@@ -657,9 +657,205 @@ body::before {
     margin-bottom: 4px;
 }
 
-.artist-albums-count {
+.artist-album-counts {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.artist-album-counts .owned-count {
+    color: var(--success);
+}
+
+.artist-album-counts .missing-count {
+    color: var(--accent);
+}
+
+/* Artist Detail Page */
+.artist-detail-header {
+    margin-bottom: 32px;
+}
+
+.back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition);
+    margin-bottom: 24px;
+}
+
+.back-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.back-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.artist-detail-info {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.artist-detail-avatar {
+    width: 100px;
+    height: 100px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    font-weight: 700;
+    color: white;
+}
+
+.artist-detail-info h2 {
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.artist-detail-stats {
+    display: flex;
+    gap: 12px;
+}
+
+.owned-badge, .missing-badge {
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
     font-size: 13px;
+    font-weight: 500;
+}
+
+.owned-badge {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success);
+}
+
+.missing-badge {
+    background: rgba(249, 115, 22, 0.15);
+    color: var(--accent);
+}
+
+/* Album Sections */
+.album-section {
+    margin-bottom: 40px;
+}
+
+.section-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.section-title svg {
+    width: 22px;
+    height: 22px;
+}
+
+.section-title.owned {
+    color: var(--success);
+    border-bottom-color: var(--success);
+}
+
+.section-title.missing {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.missing-section {
+    opacity: 0.85;
+}
+
+/* Missing Album Cards */
+.album-card.missing {
+    opacity: 0.7;
+    border-style: dashed;
+}
+
+.album-card.missing:hover {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
+.album-card.missing .album-cover {
+    filter: grayscale(30%);
+}
+
+.album-card.missing:hover .album-cover {
+    filter: none;
+}
+
+/* Album Badge */
+.album-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 600;
+    z-index: 5;
+}
+
+.album-badge.owned {
+    background: var(--success);
+    color: white;
+}
+
+.album-badge.missing {
+    background: var(--accent);
+    color: white;
+}
+
+.album-card {
+    position: relative;
+}
+
+/* Album Ownership Status in Detail */
+.album-ownership-status {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+.album-ownership-status.owned {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success);
+}
+
+.album-ownership-status.missing {
+    background: rgba(249, 115, 22, 0.15);
+    color: var(--accent);
+}
+
+.no-tracks {
+    padding: 24px;
+    text-align: center;
     color: var(--text-muted);
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
 }
 
 /* Responsive */

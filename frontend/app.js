@@ -4,6 +4,7 @@ const API_BASE = '/api';
 
 // State
 let currentView = 'albums';
+let currentArtistId = null;
 let albums = [];
 let artists = [];
 let scanStatusInterval = null;
@@ -54,6 +55,14 @@ async function getArtists() {
     return await fetchApi('/artists');
 }
 
+async function getArtist(id) {
+    return await fetchApi(`/artists/${id}`);
+}
+
+async function getArtistAlbums(artistId) {
+    return await fetchApi(`/artists/${artistId}/albums`);
+}
+
 async function getStats() {
     return await fetchApi('/stats');
 }
@@ -70,7 +79,7 @@ async function getScanStatus() {
 }
 
 // Render Functions
-function renderAlbumsGrid(albumsList) {
+function renderAlbumsGrid(albumsList, showOwnershipBadge = false) {
     const grid = document.getElementById('albums-grid');
     if (!grid) return;
     
@@ -90,7 +99,12 @@ function renderAlbumsGrid(albumsList) {
     }
 
     grid.innerHTML = albumsList.map(album => `
-        <div class="album-card" data-album-id="${album.id}">
+        <div class="album-card ${album.is_owned ? '' : 'missing'}" data-album-id="${album.id}">
+            ${showOwnershipBadge ? `
+                <div class="album-badge ${album.is_owned ? 'owned' : 'missing'}">
+                    ${album.is_owned ? '✓ Owned' : '✗ Missing'}
+                </div>
+            ` : ''}
             <div class="album-cover">
                 ${album.cover_art_url 
                     ? `<img src="${album.cover_art_url}" alt="${escapeHtml(album.title)}" onerror="this.parentElement.innerHTML = getPlaceholderSvg()">`
@@ -108,6 +122,7 @@ function renderAlbumsGrid(albumsList) {
                 <div class="album-meta">
                     ${album.release_date ? `<span>${album.release_date.substring(0, 4)}</span>` : ''}
                     ${album.track_count ? `<span>${album.track_count} tracks</span>` : ''}
+                    ${album.release_type ? `<span>${album.release_type}</span>` : ''}
                 </div>
             </div>
         </div>
@@ -122,11 +137,11 @@ function renderAlbumsGrid(albumsList) {
     });
 }
 
-function renderArtistsGrid(artists) {
+function renderArtistsGrid(artistsList) {
     content.innerHTML = `<div class="artists-grid" id="artists-grid"></div>`;
     const artistsGrid = document.getElementById('artists-grid');
 
-    if (artists.length === 0) {
+    if (artistsList.length === 0) {
         artistsGrid.innerHTML = `
             <div class="empty-state" style="grid-column: 1 / -1;">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -140,20 +155,157 @@ function renderArtistsGrid(artists) {
         return;
     }
 
-    artistsGrid.innerHTML = artists.map(artist => `
+    artistsGrid.innerHTML = artistsList.map(artist => `
         <div class="artist-card" data-artist-id="${artist.id}">
             <div class="artist-avatar">${getInitials(artist.name)}</div>
             <div class="artist-name">${escapeHtml(artist.name)}</div>
-            ${artist.country ? `<div class="artist-albums-count">${artist.country}</div>` : ''}
+            <div class="artist-album-counts">
+                <span class="owned-count" title="Albums you own">${artist.owned_album_count || 0} owned</span>
+                ${artist.missing_album_count > 0 ? `
+                    <span class="missing-count" title="Albums you're missing">${artist.missing_album_count} missing</span>
+                ` : ''}
+            </div>
         </div>
     `).join('');
+
+    // Add click handlers to show artist detail
+    document.querySelectorAll('.artist-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const artistId = card.dataset.artistId;
+            showArtistDetail(artistId);
+        });
+    });
+}
+
+async function showArtistDetail(artistId) {
+    currentArtistId = artistId;
+    currentView = 'artist-detail';
+    
+    content.innerHTML = `<div class="loading"><div class="loading-spinner"></div></div>`;
+    
+    try {
+        const [artist, albums] = await Promise.all([
+            getArtist(artistId),
+            getArtistAlbums(artistId)
+        ]);
+        
+        const ownedAlbums = albums.filter(a => a.is_owned);
+        const missingAlbums = albums.filter(a => !a.is_owned);
+        
+        pageTitle.textContent = artist.name;
+        
+        content.innerHTML = `
+            <div class="artist-detail-header">
+                <button class="back-btn" id="back-to-artists">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5M12 19l-7-7 7-7"/>
+                    </svg>
+                    Back to Artists
+                </button>
+                <div class="artist-detail-info">
+                    <div class="artist-detail-avatar">${getInitials(artist.name)}</div>
+                    <div>
+                        <h2>${escapeHtml(artist.name)}</h2>
+                        <div class="artist-detail-stats">
+                            <span class="owned-badge">${ownedAlbums.length} albums owned</span>
+                            <span class="missing-badge">${missingAlbums.length} albums missing</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            ${ownedAlbums.length > 0 ? `
+                <div class="album-section">
+                    <h3 class="section-title owned">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 6L9 17l-5-5"/>
+                        </svg>
+                        Albums You Own (${ownedAlbums.length})
+                    </h3>
+                    <div class="albums-grid" id="owned-albums-grid"></div>
+                </div>
+            ` : ''}
+            
+            ${missingAlbums.length > 0 ? `
+                <div class="album-section missing-section">
+                    <h3 class="section-title missing">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M15 9l-6 6M9 9l6 6"/>
+                        </svg>
+                        Albums You're Missing (${missingAlbums.length})
+                    </h3>
+                    <div class="albums-grid" id="missing-albums-grid"></div>
+                </div>
+            ` : ''}
+        `;
+        
+        // Render owned albums
+        if (ownedAlbums.length > 0) {
+            const ownedGrid = document.getElementById('owned-albums-grid');
+            ownedGrid.innerHTML = ownedAlbums.map(album => renderAlbumCard(album, false)).join('');
+        }
+        
+        // Render missing albums
+        if (missingAlbums.length > 0) {
+            const missingGrid = document.getElementById('missing-albums-grid');
+            missingGrid.innerHTML = missingAlbums.map(album => renderAlbumCard(album, true)).join('');
+        }
+        
+        // Add click handlers
+        document.querySelectorAll('.album-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const albumId = card.dataset.albumId;
+                showAlbumDetail(albumId);
+            });
+        });
+        
+        // Back button handler
+        document.getElementById('back-to-artists').addEventListener('click', () => {
+            navigateTo('artists');
+        });
+        
+    } catch (error) {
+        console.error('Error loading artist:', error);
+        content.innerHTML = `
+            <div class="empty-state">
+                <h2>Error loading artist</h2>
+                <p>Could not load artist details.</p>
+            </div>
+        `;
+    }
+}
+
+function renderAlbumCard(album, isMissing = false) {
+    return `
+        <div class="album-card ${isMissing ? 'missing' : ''}" data-album-id="${album.id}">
+            <div class="album-cover">
+                ${album.cover_art_url 
+                    ? `<img src="${album.cover_art_url}" alt="${escapeHtml(album.title)}" onerror="this.parentElement.innerHTML = getPlaceholderSvg()">`
+                    : `<div class="album-cover-placeholder">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </div>`
+                }
+            </div>
+            <div class="album-info">
+                <div class="album-title">${escapeHtml(album.title)}</div>
+                <div class="album-meta">
+                    ${album.release_date ? `<span>${album.release_date.substring(0, 4)}</span>` : ''}
+                    ${album.release_type ? `<span>${album.release_type}</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 async function showAlbumDetail(albumId) {
     try {
         const album = await getAlbum(albumId);
         
-        const totalDuration = album.tracks.reduce((sum, t) => sum + (t.duration_seconds || 0), 0);
+        const totalDuration = album.tracks ? album.tracks.reduce((sum, t) => sum + (t.duration_seconds || 0), 0) : 0;
         const durationStr = formatDuration(totalDuration);
 
         albumDetail.innerHTML = `
@@ -169,6 +321,9 @@ async function showAlbumDetail(albumId) {
                 }
             </div>
             <div class="album-detail-info">
+                <div class="album-ownership-status ${album.is_owned ? 'owned' : 'missing'}">
+                    ${album.is_owned ? '✓ In Your Library' : '✗ Not In Library'}
+                </div>
                 <h2>${escapeHtml(album.title)}</h2>
                 <div class="album-detail-artist">${album.artist ? escapeHtml(album.artist.name) : 'Unknown Artist'}</div>
                 <div class="album-detail-meta">
@@ -189,7 +344,7 @@ async function showAlbumDetail(albumId) {
                             ${album.release_date}
                         </span>
                     ` : ''}
-                    ${album.tracks.length ? `
+                    ${album.tracks && album.tracks.length ? `
                         <span>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M9 18V5l12-2v13"/>
@@ -209,16 +364,22 @@ async function showAlbumDetail(albumId) {
                         </span>
                     ` : ''}
                 </div>
-                <div class="tracks-list">
-                    <h3>Tracklist</h3>
-                    ${album.tracks.sort((a, b) => (a.disc_number - b.disc_number) || (a.track_number - b.track_number)).map(track => `
-                        <div class="track-item">
-                            <span class="track-number">${track.track_number || '-'}</span>
-                            <span class="track-title">${escapeHtml(track.title)}</span>
-                            <span class="track-duration">${track.duration_seconds ? formatTrackDuration(track.duration_seconds) : '--:--'}</span>
-                        </div>
-                    `).join('')}
-                </div>
+                ${album.tracks && album.tracks.length > 0 ? `
+                    <div class="tracks-list">
+                        <h3>Tracklist</h3>
+                        ${album.tracks.sort((a, b) => (a.disc_number - b.disc_number) || (a.track_number - b.track_number)).map(track => `
+                            <div class="track-item">
+                                <span class="track-number">${track.track_number || '-'}</span>
+                                <span class="track-title">${escapeHtml(track.title)}</span>
+                                <span class="track-duration">${track.duration_seconds ? formatTrackDuration(track.duration_seconds) : '--:--'}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : `
+                    <div class="no-tracks">
+                        <p>No track information available for this album.</p>
+                    </div>
+                `}
             </div>
         `;
 
@@ -268,6 +429,7 @@ function getPlaceholderSvg() {
 // Navigation
 async function navigateTo(view) {
     currentView = view;
+    currentArtistId = null;
     
     // Update nav
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -386,7 +548,11 @@ async function refreshData() {
     }
     
     // Refresh current view
-    navigateTo(currentView);
+    if (currentView === 'artist-detail' && currentArtistId) {
+        showArtistDetail(currentArtistId);
+    } else {
+        navigateTo(currentView);
+    }
 }
 
 // Search
@@ -446,4 +612,3 @@ async function init() {
 }
 
 init();
-

@@ -1,12 +1,9 @@
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Set
 from datetime import datetime
 from sqlalchemy.orm import Session
 from mutagen import File as MutagenFile
-from mutagen.easyid3 import EasyID3
-from mutagen.flac import FLAC
-from mutagen.mp4 import MP4
 
 from app.models import Album, Artist, Track, ScanStatus
 from app.services.musicbrainz import MusicBrainzService
@@ -148,22 +145,37 @@ class ScannerService:
         except (ValueError, TypeError):
             return None
 
-    def get_or_create_artist(self, name: str, musicbrainz_id: Optional[str] = None) -> Artist:
+    def get_or_create_artist(
+        self, 
+        name: str, 
+        musicbrainz_id: Optional[str] = None,
+        sort_name: Optional[str] = None
+    ) -> Artist:
         """Get an existing artist or create a new one."""
         if musicbrainz_id:
             artist = self.db.query(Artist).filter(
                 Artist.musicbrainz_id == musicbrainz_id
             ).first()
             if artist:
+                # Update sort_name if we have it and artist doesn't
+                if sort_name and not artist.sort_name:
+                    artist.sort_name = sort_name
+                    self.db.commit()
                 return artist
 
         # Try to find by name
         artist = self.db.query(Artist).filter(Artist.name == name).first()
         if artist:
+            # Update musicbrainz_id if we have it and artist doesn't
+            if musicbrainz_id and not artist.musicbrainz_id:
+                artist.musicbrainz_id = musicbrainz_id
+                if sort_name and not artist.sort_name:
+                    artist.sort_name = sort_name
+                self.db.commit()
             return artist
 
         # Create new artist
-        artist = Artist(name=name, musicbrainz_id=musicbrainz_id)
+        artist = Artist(name=name, musicbrainz_id=musicbrainz_id, sort_name=sort_name)
         self.db.add(artist)
         self.db.commit()
         self.db.refresh(artist)
@@ -191,12 +203,9 @@ class ScannerService:
         if mb_info and mb_info.get("artist_name"):
             artist = self.get_or_create_artist(
                 mb_info["artist_name"],
-                mb_info.get("artist_musicbrainz_id")
+                mb_info.get("artist_musicbrainz_id"),
+                mb_info.get("artist_sort_name")
             )
-            # Update artist with additional info if available
-            if mb_info.get("artist_sort_name") and not artist.sort_name:
-                artist.sort_name = mb_info["artist_sort_name"]
-                self.db.commit()
         elif artist_name:
             artist = self.get_or_create_artist(artist_name)
 
@@ -205,11 +214,13 @@ class ScannerService:
             album = existing
             album.title = mb_info.get("title", album_title) if mb_info else album_title
             album.artist_id = artist.id if artist else None
+            album.is_owned = True
         else:
             album = Album(
                 title=mb_info.get("title", album_title) if mb_info else album_title,
                 folder_path=folder_path,
-                artist_id=artist.id if artist else None
+                artist_id=artist.id if artist else None,
+                is_owned=True
             )
             self.db.add(album)
 
@@ -254,6 +265,75 @@ class ScannerService:
 
         self.db.commit()
 
+    def fetch_artist_discography(self, artist: Artist) -> int:
+        """
+        Fetch all albums by an artist from MusicBrainz and add missing ones.
+        Returns the number of missing albums added.
+        """
+        if not artist.musicbrainz_id:
+            print(f"Artist {artist.name} has no MusicBrainz ID, skipping discography fetch")
+            return 0
+
+        # Skip if we've already fetched the discography recently
+        if artist.discography_fetched:
+            return 0
+
+        print(f"Fetching discography for {artist.name}...")
+        
+        # Get all release groups from MusicBrainz
+        releases = MusicBrainzService.get_artist_releases(artist.musicbrainz_id)
+        
+        if not releases:
+            print(f"No releases found for {artist.name}")
+            artist.discography_fetched = True
+            self.db.commit()
+            return 0
+
+        # Get existing album MusicBrainz IDs for this artist
+        existing_mb_ids: Set[str] = set()
+        for album in self.db.query(Album).filter(Album.artist_id == artist.id).all():
+            if album.musicbrainz_id:
+                existing_mb_ids.add(album.musicbrainz_id)
+
+        # Also check by title to avoid duplicates
+        existing_titles: Set[str] = set()
+        for album in self.db.query(Album).filter(Album.artist_id == artist.id).all():
+            existing_titles.add(album.title.lower())
+
+        missing_count = 0
+        for release in releases:
+            mb_id = release.get("musicbrainz_id")
+            title = release.get("title", "")
+            
+            # Skip if we already have this album (by MB ID or title)
+            if mb_id in existing_mb_ids:
+                continue
+            if title.lower() in existing_titles:
+                continue
+
+            # Create missing album entry
+            missing_album = Album(
+                title=title,
+                musicbrainz_id=mb_id,
+                artist_id=artist.id,
+                release_date=release.get("release_date"),
+                release_type=release.get("release_type"),
+                cover_art_url=release.get("cover_art_url"),
+                folder_path=None,  # No local folder
+                is_owned=False,  # We don't have this album
+                is_scanned=True  # No need to scan, it's from MusicBrainz
+            )
+            self.db.add(missing_album)
+            existing_mb_ids.add(mb_id)
+            existing_titles.add(title.lower())
+            missing_count += 1
+
+        artist.discography_fetched = True
+        self.db.commit()
+        
+        print(f"Added {missing_count} missing albums for {artist.name}")
+        return missing_count
+
     def scan_library(self, force_rescan: bool = False) -> ScanStatus:
         """Scan the entire music library."""
         status = self.get_or_create_scan_status()
@@ -288,6 +368,23 @@ class ScannerService:
                     print(f"Error scanning {folder_path}: {e}")
                     continue
 
+            # After scanning owned albums, fetch discographies for all artists
+            print("Fetching artist discographies...")
+            artists = self.db.query(Artist).filter(
+                Artist.musicbrainz_id.isnot(None)
+            ).all()
+            
+            for artist in artists:
+                try:
+                    # Reset discography_fetched if force_rescan
+                    if force_rescan:
+                        artist.discography_fetched = False
+                        self.db.commit()
+                    self.fetch_artist_discography(artist)
+                except Exception as e:
+                    print(f"Error fetching discography for {artist.name}: {e}")
+                    continue
+
             status.status = "completed"
             status.completed_at = datetime.utcnow()
 
@@ -298,4 +395,3 @@ class ScannerService:
 
         self.db.commit()
         return status
-
