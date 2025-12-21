@@ -65,7 +65,21 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
                 className="artist-card"
                 onClick={() => onArtistClick(artist.id)}
               >
-                <div className="artist-avatar">{getInitials(artist.name)}</div>
+                {artist.image_url ? (
+                  <div className="artist-image">
+                    <img 
+                      src={artist.image_url} 
+                      alt={artist.name}
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        e.currentTarget.parentElement?.classList.add('show-fallback');
+                      }}
+                    />
+                    <span className="artist-initials">{getInitials(artist.name)}</span>
+                  </div>
+                ) : (
+                  <div className="artist-avatar">{getInitials(artist.name)}</div>
+                )}
                 <div className="artist-name">{artist.name}</div>
                 <div className="artist-album-counts">
                   <span className="owned-count">

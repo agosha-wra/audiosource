@@ -13,6 +13,7 @@ class Artist(Base):
     sort_name = Column(String(500), nullable=True)
     disambiguation = Column(Text, nullable=True)
     country = Column(String(100), nullable=True)
+    image_url = Column(Text, nullable=True)  # Artist photo URL
     discography_fetched = Column(Boolean, default=False)  # True if we've fetched all albums
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -80,3 +81,17 @@ class ScanSchedule(Base):
     interval_hours = Column(Integer, default=24)  # Scan every N hours
     last_scan_at = Column(DateTime, nullable=True)
     next_scan_at = Column(DateTime, nullable=True)
+
+
+class UpcomingReleasesStatus(Base):
+    __tablename__ = "upcoming_releases_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), default="idle")  # idle, scanning, completed, error
+    artists_checked = Column(Integer, default=0)
+    total_artists = Column(Integer, default=0)
+    releases_found = Column(Integer, default=0)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    last_check_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)

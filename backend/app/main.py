@@ -8,7 +8,7 @@ import threading
 import asyncio
 
 from app.database import get_db, engine, Base, SessionLocal
-from app.models import Album, Artist, ScanStatus, ScanSchedule
+from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus
 from app.schemas import (
     AlbumResponse,
     AlbumDetailResponse,
@@ -20,9 +20,11 @@ from app.schemas import (
     ScanScheduleUpdate,
     WishlistAddRequest,
     MusicBrainzSearchResult,
+    UpcomingReleasesStatusResponse,
 )
 from app.services.scanner import ScannerService
 from app.services.musicbrainz import MusicBrainzService
+from app.services.upcoming import UpcomingReleasesService
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -60,7 +62,7 @@ def run_scan_in_background(force_rescan: bool):
 
 
 async def scheduled_scan_loop():
-    """Background loop that checks for scheduled scans."""
+    """Background loop that checks for scheduled scans and upcoming releases."""
     global _scheduler_running
     _scheduler_running = True
     
@@ -89,6 +91,19 @@ async def scheduled_scan_loop():
                             schedule.last_scan_at = now
                             schedule.next_scan_at = now + timedelta(hours=schedule.interval_hours)
                             db.commit()
+                
+                # Check for upcoming releases daily
+                upcoming_status = db.query(UpcomingReleasesStatus).first()
+                if upcoming_status:
+                    # Run if never run or last check was more than 24 hours ago
+                    should_check = (
+                        upcoming_status.last_check_at is None or
+                        (now - upcoming_status.last_check_at) > timedelta(hours=24)
+                    )
+                    if should_check and upcoming_status.status != "scanning":
+                        print(f"Starting scheduled upcoming releases check at {now}")
+                        thread = threading.Thread(target=run_upcoming_check_in_background)
+                        thread.start()
             finally:
                 db.close()
         except Exception as e:
@@ -473,3 +488,68 @@ def search_musicbrainz(q: str, db: Session = Depends(get_db)):
         ))
     
     return response
+
+
+# ============ Upcoming Releases ============
+
+# Background task lock for upcoming releases
+_upcoming_lock = threading.Lock()
+
+
+def run_upcoming_check_in_background():
+    """Run the upcoming releases check in a background thread."""
+    db = SessionLocal()
+    try:
+        with _upcoming_lock:
+            service = UpcomingReleasesService(db)
+            service.check_upcoming_releases()
+    finally:
+        db.close()
+
+
+@app.post("/api/upcoming/check", response_model=UpcomingReleasesStatusResponse)
+def check_upcoming_releases(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Start checking for upcoming releases from artists with owned albums.
+    Upcoming releases are automatically added to the wishlist.
+    """
+    service = UpcomingReleasesService(db)
+    status = service.get_or_create_status()
+    
+    # If already scanning, return current status
+    if status.status == "scanning":
+        return status
+    
+    # Mark as pending
+    status.status = "pending"
+    db.commit()
+    db.refresh(status)
+    
+    # Start background check
+    background_tasks.add_task(run_upcoming_check_in_background)
+    
+    return status
+
+
+@app.get("/api/upcoming/status", response_model=UpcomingReleasesStatusResponse)
+def get_upcoming_status(db: Session = Depends(get_db)):
+    """Get the current upcoming releases check status."""
+    service = UpcomingReleasesService(db)
+    return service.get_or_create_status()
+
+
+@app.get("/api/upcoming/albums", response_model=List[AlbumResponse])
+def get_upcoming_albums(db: Session = Depends(get_db)):
+    """Get all upcoming albums (future release dates) that are in the wishlist."""
+    from datetime import date
+    today = date.today().isoformat()
+    
+    albums = db.query(Album).filter(
+        Album.is_wishlisted == True,
+        Album.release_date > today
+    ).order_by(Album.release_date).all()
+    
+    return albums

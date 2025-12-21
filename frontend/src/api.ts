@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus } from './types';
 
 const API_BASE = '/api';
 
@@ -75,5 +75,18 @@ export async function removeFromWishlist(albumId: number): Promise<void> {
 export async function searchMusicBrainz(query: string): Promise<MusicBrainzSearchResult[]> {
   if (!query || query.length < 2) return [];
   return fetchApi<MusicBrainzSearchResult[]>(`/search/musicbrainz?q=${encodeURIComponent(query)}`);
+}
+
+// Upcoming Releases
+export async function checkUpcomingReleases(): Promise<UpcomingStatus> {
+  return fetchApi<UpcomingStatus>('/upcoming/check', { method: 'POST' });
+}
+
+export async function getUpcomingStatus(): Promise<UpcomingStatus> {
+  return fetchApi<UpcomingStatus>('/upcoming/status');
+}
+
+export async function getUpcomingAlbums(): Promise<Album[]> {
+  return fetchApi<Album[]>('/upcoming/albums');
 }
 

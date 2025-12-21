@@ -1,5 +1,7 @@
 import musicbrainzngs
 import time
+import requests
+from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 from app.config import get_settings
 
@@ -276,3 +278,63 @@ class MusicBrainzService:
         info["track_count"] = track_count if track_count > 0 else None
 
         return info
+
+    @classmethod
+    def get_artist_image_url(cls, musicbrainz_id: str) -> Optional[str]:
+        """
+        Get artist image URL from Fanart.tv.
+        Falls back to a placeholder if not found.
+        """
+        try:
+            # Fanart.tv API - free tier, no API key needed for basic access
+            url = f"https://webservice.fanart.tv/v3/music/{musicbrainz_id}?api_key=1"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Try artistthumb first, then artistbackground
+                thumbs = data.get("artistthumb", [])
+                if thumbs:
+                    return thumbs[0].get("url")
+                backgrounds = data.get("artistbackground", [])
+                if backgrounds:
+                    return backgrounds[0].get("url")
+        except Exception as e:
+            print(f"Error fetching artist image from Fanart.tv: {e}")
+        
+        return None
+
+    @classmethod
+    def get_upcoming_releases(
+        cls,
+        artist_musicbrainz_id: str,
+        release_types: List[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get upcoming (future) releases for an artist.
+        
+        Args:
+            artist_musicbrainz_id: The MusicBrainz ID of the artist
+            release_types: List of release types to include
+        
+        Returns:
+            List of upcoming release information dictionaries
+        """
+        if release_types is None:
+            release_types = ["album", "ep"]
+        
+        today = date.today().isoformat()
+        upcoming = []
+        
+        # Get all releases and filter for future ones
+        all_releases = cls.get_artist_releases(artist_musicbrainz_id, release_types)
+        
+        for release in all_releases:
+            release_date = release.get("release_date", "")
+            if release_date and release_date > today:
+                upcoming.append(release)
+        
+        # Sort by release date
+        upcoming.sort(key=lambda x: x.get("release_date", ""))
+        
+        return upcoming

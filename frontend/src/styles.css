@@ -655,6 +655,41 @@ body::before {
   color: white;
 }
 
+.artist-image {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+}
+
+.artist-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.artist-image .artist-initials {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 700;
+  color: white;
+}
+
+.artist-image.show-fallback img {
+  display: none;
+}
+
+.artist-image.show-fallback .artist-initials {
+  display: flex;
+}
+
 .artist-name {
   font-weight: 600;
   margin-bottom: 4px;
@@ -978,6 +1013,42 @@ body::before {
 }
 
 /* Wishlist view */
+.header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.upcoming-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.upcoming-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.upcoming-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.upcoming-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
 .search-albums-btn {
   display: flex;
   align-items: center;
@@ -1002,6 +1073,91 @@ body::before {
 .search-albums-btn svg {
   width: 18px;
   height: 18px;
+}
+
+.wishlist-section {
+  margin-bottom: 40px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: var(--text-primary);
+}
+
+.section-header svg {
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+
+.section-header.upcoming {
+  color: #22c55e;
+}
+
+.section-header.upcoming svg {
+  color: #22c55e;
+}
+
+.upcoming-album {
+  position: relative;
+}
+
+.upcoming-badge {
+  position: absolute;
+  bottom: 70px;
+  left: 8px;
+  background: rgba(34, 197, 94, 0.9);
+  color: white;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+}
+
+.empty-state-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 24px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondary-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .wishlist-album-wrapper {

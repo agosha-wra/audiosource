@@ -4,6 +4,7 @@ export interface Artist {
   musicbrainz_id: string | null;
   sort_name: string | null;
   country: string | null;
+  image_url: string | null;
   created_at: string;
   owned_album_count?: number;
   missing_album_count?: number;  // Missing albums NOT in wishlist
@@ -53,6 +54,18 @@ export interface Stats {
   missing_album_count: number;
   wishlist_count: number;
   artist_count: number;
+}
+
+export interface UpcomingStatus {
+  id: number;
+  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error';
+  artists_checked: number;
+  total_artists: number;
+  releases_found: number;
+  started_at: string | null;
+  completed_at: string | null;
+  last_check_at: string | null;
+  error_message: string | null;
 }
 
 export interface MusicBrainzSearchResult {

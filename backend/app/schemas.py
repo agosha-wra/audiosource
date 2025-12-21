@@ -8,6 +8,7 @@ class ArtistBase(BaseModel):
     musicbrainz_id: Optional[str] = None
     sort_name: Optional[str] = None
     country: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class ArtistResponse(ArtistBase):
@@ -134,3 +135,19 @@ class MusicBrainzSearchResult(BaseModel):
     existing_album_id: Optional[int] = None
     is_owned: bool = False
     is_wishlisted: bool = False
+
+
+# Upcoming releases schemas
+class UpcomingReleasesStatusResponse(BaseModel):
+    id: int
+    status: str
+    artists_checked: int
+    total_artists: int
+    releases_found: int
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    last_check_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
