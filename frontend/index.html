@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AudioSource</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 2v4M12 18v4"/>
+                </svg>
+                <span>AudioSource</span>
+            </div>
+            
+            <nav class="nav">
+                <a href="#" class="nav-item active" data-view="albums">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7" rx="1"/>
+                        <rect x="14" y="3" width="7" height="7" rx="1"/>
+                        <rect x="3" y="14" width="7" height="7" rx="1"/>
+                        <rect x="14" y="14" width="7" height="7" rx="1"/>
+                    </svg>
+                    Albums
+                </a>
+                <a href="#" class="nav-item" data-view="artists">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="8" r="4"/>
+                        <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
+                    </svg>
+                    Artists
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="stats" id="stats">
+                    <div class="stat">
+                        <span class="stat-value" id="album-count">--</span>
+                        <span class="stat-label">Albums</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="artist-count">--</span>
+                        <span class="stat-label">Artists</span>
+                    </div>
+                </div>
+                
+                <button class="scan-btn" id="scan-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        <path d="M12 8v4l2 2"/>
+                    </svg>
+                    <span>Scan Library</span>
+                </button>
+                
+                <div class="scan-status" id="scan-status" style="display: none;">
+                    <div class="scan-progress">
+                        <div class="scan-progress-bar" id="scan-progress-bar"></div>
+                    </div>
+                    <span class="scan-text" id="scan-text">Scanning...</span>
+                </div>
+            </div>
+        </aside>
+        
+        <main class="main">
+            <header class="header">
+                <h1 id="page-title">Albums</h1>
+                <div class="search-box">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                    <input type="text" placeholder="Search albums..." id="search-input">
+                </div>
+            </header>
+            
+            <div class="content" id="content">
+                <div class="albums-grid" id="albums-grid">
+                    <!-- Albums will be loaded here -->
+                </div>
+            </div>
+        </main>
+        
+        <!-- Album Detail Modal -->
+        <div class="modal" id="album-modal">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <button class="modal-close" id="modal-close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+                <div class="album-detail" id="album-detail">
+                    <!-- Album details will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
+

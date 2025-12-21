@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: audiosource-db
+    environment:
+      POSTGRES_USER: audiosource
+      POSTGRES_PASSWORD: audiosource
+      POSTGRES_DB: audiosource
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audiosource"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - audiosource-network
+
+  app:
+    build: .
+    container_name: audiosource-app
+    environment:
+      DATABASE_URL: postgresql://audiosource:audiosource@db:5432/audiosource
+      MUSIC_FOLDER: /music
+    ports:
+      - "8080:80"
+    volumes:
+      - ${MUSIC_FOLDER:-./music}:/music:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - audiosource-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  audiosource-network:
+    driver: bridge
