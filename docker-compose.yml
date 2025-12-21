@@ -25,7 +25,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ${MUSIC_FOLDER:-./music}:/music:ro
+      - ${MUSIC_FOLDER:-./music}:/music
     depends_on:
       db:
         condition: service_healthy

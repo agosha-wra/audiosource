@@ -1,4 +1,6 @@
 import os
+import re
+import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple, Set
 from datetime import datetime
@@ -13,6 +15,23 @@ settings = get_settings()
 
 # Supported audio file extensions
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".wav", ".wma", ".aiff"}
+
+# Characters not allowed in filenames
+INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*]')
+
+
+def sanitize_filename(name: str) -> str:
+    """Remove or replace characters that are invalid in filenames."""
+    if not name:
+        return "Unknown"
+    # Replace invalid characters with underscore
+    sanitized = INVALID_FILENAME_CHARS.sub('_', name)
+    # Remove leading/trailing whitespace and dots
+    sanitized = sanitized.strip(' .')
+    # Limit length to avoid path issues
+    if len(sanitized) > 200:
+        sanitized = sanitized[:200]
+    return sanitized or "Unknown"
 
 
 class ScannerService:
@@ -181,6 +200,170 @@ class ScannerService:
         self.db.refresh(artist)
         return artist
 
+    def _is_properly_organized(
+        self,
+        folder_path: str,
+        artist_name: str,
+        album_title: str
+    ) -> bool:
+        """
+        Check if a folder is already in the proper Artist/Album structure.
+        Returns True if folder matches {music_folder}/{artist}/{album}/
+        """
+        folder = Path(folder_path)
+        music_root = Path(settings.music_folder)
+        
+        try:
+            relative = folder.relative_to(music_root)
+            parts = relative.parts
+            
+            # Should be exactly 2 levels deep: Artist/Album
+            if len(parts) != 2:
+                return False
+            
+            expected_artist = sanitize_filename(artist_name)
+            expected_album = sanitize_filename(album_title)
+            
+            # Check if folder names match (case-insensitive)
+            return (
+                parts[0].lower() == expected_artist.lower() and
+                parts[1].lower() == expected_album.lower()
+            )
+        except ValueError:
+            # folder_path is not under music_root
+            return False
+
+    def organize_album_folder(
+        self,
+        current_folder: str,
+        artist_name: str,
+        album_title: str,
+        tracks_info: List[dict]
+    ) -> Tuple[str, List[dict]]:
+        """
+        Organize an album folder into the proper structure:
+        {music_folder}/{Artist}/{Album}/{track_number} - {track_title}.ext
+        
+        Returns (new_folder_path, updated_tracks_info)
+        """
+        if not artist_name:
+            artist_name = "Unknown Artist"
+        
+        # Check if already organized
+        if self._is_properly_organized(current_folder, artist_name, album_title):
+            print(f"Album already organized: {album_title}")
+            return current_folder, tracks_info
+        
+        music_root = Path(settings.music_folder)
+        safe_artist = sanitize_filename(artist_name)
+        safe_album = sanitize_filename(album_title)
+        
+        # Create target directory
+        target_dir = music_root / safe_artist / safe_album
+        
+        # Check if target already exists
+        if target_dir.exists() and target_dir != Path(current_folder):
+            # Add a suffix to avoid collision
+            counter = 1
+            while target_dir.exists():
+                target_dir = music_root / safe_artist / f"{safe_album} ({counter})"
+                counter += 1
+        
+        print(f"Organizing: {current_folder} -> {target_dir}")
+        
+        # Create directory structure
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Check if we have multiple discs
+        disc_numbers = set(t.get("disc_number", 1) for t in tracks_info)
+        has_multiple_discs = len(disc_numbers) > 1
+        
+        # Move and rename each track
+        updated_tracks = []
+        for track in tracks_info:
+            old_path = Path(track["file_path"])
+            if not old_path.exists():
+                updated_tracks.append(track)
+                continue
+            
+            # Build new filename
+            track_num = track.get("track_number")
+            disc_num = track.get("disc_number", 1)
+            title = sanitize_filename(track.get("title", old_path.stem))
+            ext = old_path.suffix.lower()
+            
+            if track_num:
+                if has_multiple_discs:
+                    new_name = f"{disc_num}-{track_num:02d} - {title}{ext}"
+                else:
+                    new_name = f"{track_num:02d} - {title}{ext}"
+            else:
+                new_name = f"{title}{ext}"
+            
+            new_path = target_dir / new_name
+            
+            # Handle filename collision
+            if new_path.exists() and new_path != old_path:
+                counter = 1
+                stem = new_path.stem
+                while new_path.exists():
+                    new_path = target_dir / f"{stem} ({counter}){ext}"
+                    counter += 1
+            
+            # Move file
+            try:
+                if old_path != new_path:
+                    shutil.move(str(old_path), str(new_path))
+                    print(f"  Moved: {old_path.name} -> {new_path.name}")
+                
+                # Update track info
+                updated_track = track.copy()
+                updated_track["file_path"] = str(new_path)
+                updated_tracks.append(updated_track)
+            except Exception as e:
+                print(f"  Error moving {old_path}: {e}")
+                updated_tracks.append(track)
+        
+        # Move any remaining files (cover art, etc.)
+        current_folder_path = Path(current_folder)
+        if current_folder_path.exists():
+            for item in current_folder_path.iterdir():
+                if item.is_file():
+                    target_file = target_dir / item.name
+                    if not target_file.exists():
+                        try:
+                            shutil.move(str(item), str(target_file))
+                            print(f"  Moved extra file: {item.name}")
+                        except Exception as e:
+                            print(f"  Error moving {item}: {e}")
+        
+        # Remove old folder if empty
+        self._remove_empty_folders(current_folder_path)
+        
+        return str(target_dir), updated_tracks
+
+    def _remove_empty_folders(self, folder: Path):
+        """Recursively remove empty folders up to the music root."""
+        music_root = Path(settings.music_folder)
+        
+        current = folder
+        while current != music_root and current.exists():
+            try:
+                # Check if folder is empty (or only contains hidden files like .DS_Store)
+                contents = [f for f in current.iterdir() if not f.name.startswith('.')]
+                if not contents:
+                    # Remove hidden files too
+                    for f in current.iterdir():
+                        f.unlink()
+                    current.rmdir()
+                    print(f"  Removed empty folder: {current}")
+                    current = current.parent
+                else:
+                    break
+            except Exception as e:
+                print(f"  Error removing folder {current}: {e}")
+                break
+
     def scan_album_folder(self, folder_path: str, force_rescan: bool = False) -> Optional[Album]:
         """Scan a single album folder and create/update database records."""
         # Check if album already exists
@@ -198,6 +381,18 @@ class ScannerService:
             if mb_release:
                 mb_info = MusicBrainzService.extract_release_info(mb_release)
 
+        # Use MusicBrainz data for artist/album names if available
+        final_artist_name = mb_info.get("artist_name") if mb_info else artist_name
+        final_album_title = mb_info.get("title", album_title) if mb_info else album_title
+
+        # Organize the folder structure
+        new_folder_path, updated_tracks = self.organize_album_folder(
+            folder_path,
+            final_artist_name,
+            final_album_title,
+            tracks_info
+        )
+
         # Determine artist
         artist = None
         if mb_info and mb_info.get("artist_name"):
@@ -209,16 +404,33 @@ class ScannerService:
         elif artist_name:
             artist = self.get_or_create_artist(artist_name)
 
-        # Create or update album
-        if existing:
+        # Check if album exists at new path (in case folder was reorganized)
+        if new_folder_path != folder_path:
+            existing_at_new = self.db.query(Album).filter(
+                Album.folder_path == new_folder_path
+            ).first()
+            if existing_at_new:
+                # Update existing album at new location
+                album = existing_at_new
+            elif existing:
+                # Update the existing album's path
+                album = existing
+                album.folder_path = new_folder_path
+            else:
+                album = None
+        else:
             album = existing
-            album.title = mb_info.get("title", album_title) if mb_info else album_title
+
+        # Create or update album
+        if album:
+            album.title = final_album_title
             album.artist_id = artist.id if artist else None
             album.is_owned = True
+            album.folder_path = new_folder_path
         else:
             album = Album(
-                title=mb_info.get("title", album_title) if mb_info else album_title,
-                folder_path=folder_path,
+                title=final_album_title,
+                folder_path=new_folder_path,
                 artist_id=artist.id if artist else None,
                 is_owned=True
             )
@@ -229,20 +441,20 @@ class ScannerService:
             album.musicbrainz_id = mb_info.get("musicbrainz_id")
             album.release_date = mb_info.get("release_date")
             album.release_type = mb_info.get("release_type")
-            album.track_count = mb_info.get("track_count") or len(tracks_info)
+            album.track_count = mb_info.get("track_count") or len(updated_tracks)
 
             # Set cover art URL
             if album.musicbrainz_id:
                 album.cover_art_url = MusicBrainzService.get_cover_art_url(album.musicbrainz_id)
         else:
-            album.track_count = len(tracks_info)
+            album.track_count = len(updated_tracks)
 
         album.is_scanned = True
         self.db.commit()
         self.db.refresh(album)
 
-        # Create tracks
-        self._create_tracks(album, tracks_info)
+        # Create tracks with updated paths
+        self._create_tracks(album, updated_tracks)
 
         return album
 
@@ -356,7 +568,7 @@ class ScannerService:
             status.total_folders = len(album_folders)
             self.db.commit()
 
-            # Scan each folder
+            # Scan each folder (this will also organize files)
             for i, folder_path in enumerate(album_folders):
                 status.current_folder = folder_path
                 status.scanned_folders = i + 1
