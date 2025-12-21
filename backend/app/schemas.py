@@ -151,3 +151,34 @@ class UpcomingReleasesStatusResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# New Releases (AOTY) schemas
+class NewReleaseResponse(BaseModel):
+    id: int
+    artist_name: str
+    album_title: str
+    release_date: Optional[str] = None
+    release_type: Optional[str] = None
+    aoty_url: str
+    cover_art_url: Optional[str] = None
+    critic_score: Optional[int] = None
+    num_critics: Optional[int] = None
+    week_year: int
+    week_number: int
+    scraped_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class NewReleasesScrapeStatusResponse(BaseModel):
+    id: int
+    status: str
+    last_scrape_at: Optional[datetime] = None
+    next_scrape_at: Optional[datetime] = None
+    albums_found: int
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True

@@ -92,5 +92,29 @@ export interface WishlistAddRequest {
   cover_art_url?: string;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist';
+// New Releases from AOTY
+export interface NewRelease {
+  id: number;
+  artist_name: string;
+  album_title: string;
+  release_date: string | null;
+  release_type: string | null;
+  aoty_url: string;
+  cover_art_url: string | null;
+  critic_score: number | null;
+  num_critics: number | null;
+  week_year: number;
+  week_number: number;
+  scraped_at: string;
+}
 
+export interface NewReleasesScrapeStatus {
+  id: number;
+  status: 'idle' | 'scraping' | 'completed' | 'error';
+  last_scrape_at: string | null;
+  next_scrape_at: string | null;
+  albums_found: number;
+  error_message: string | null;
+}
+
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases';

@@ -95,3 +95,34 @@ class UpcomingReleasesStatus(Base):
     completed_at = Column(DateTime, nullable=True)
     last_check_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
+
+
+class NewRelease(Base):
+    """New releases scraped from Album of the Year (AOTY)."""
+    __tablename__ = "new_releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    artist_name = Column(String(500), nullable=False)
+    album_title = Column(String(500), nullable=False)
+    release_date = Column(String(50), nullable=True)  # e.g., "Oct 31"
+    release_type = Column(String(100), nullable=True)  # LP, EP, etc.
+    aoty_url = Column(Text, nullable=False, unique=True)  # Full album page URL
+    cover_art_url = Column(Text, nullable=True)
+    critic_score = Column(Integer, nullable=True)  # 0-100
+    num_critics = Column(Integer, nullable=True)
+    week_year = Column(Integer, nullable=False)  # e.g., 2025
+    week_number = Column(Integer, nullable=False)  # e.g., 44
+    scraped_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NewReleasesScrapeStatus(Base):
+    """Status of the AOTY scraping."""
+    __tablename__ = "new_releases_scrape_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), default="idle")  # idle, scraping, completed, error
+    last_scrape_at = Column(DateTime, nullable=True)
+    next_scrape_at = Column(DateTime, nullable=True)
+    albums_found = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)

@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus } from './types';
 
 const API_BASE = '/api';
 
@@ -90,3 +90,25 @@ export async function getUpcomingAlbums(): Promise<Album[]> {
   return fetchApi<Album[]>('/upcoming/albums');
 }
 
+// New Releases (AOTY)
+export async function getNewReleases(year?: number, week?: number): Promise<NewRelease[]> {
+  const params = new URLSearchParams();
+  if (year) params.append('year', year.toString());
+  if (week) params.append('week', week.toString());
+  const queryString = params.toString();
+  return fetchApi<NewRelease[]>(`/new-releases${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function scrapeNewReleases(year?: number, week?: number): Promise<NewReleasesScrapeStatus> {
+  const params = new URLSearchParams();
+  if (year) params.append('year', year.toString());
+  if (week) params.append('week', week.toString());
+  const queryString = params.toString();
+  return fetchApi<NewReleasesScrapeStatus>(`/new-releases/scrape${queryString ? `?${queryString}` : ''}`, {
+    method: 'POST',
+  });
+}
+
+export async function getNewReleasesScrapeStatus(): Promise<NewReleasesScrapeStatus> {
+  return fetchApi<NewReleasesScrapeStatus>('/new-releases/status');
+}

@@ -21,10 +21,13 @@ from app.schemas import (
     WishlistAddRequest,
     MusicBrainzSearchResult,
     UpcomingReleasesStatusResponse,
+    NewReleaseResponse,
+    NewReleasesScrapeStatusResponse,
 )
 from app.services.scanner import ScannerService
 from app.services.musicbrainz import MusicBrainzService
 from app.services.upcoming import UpcomingReleasesService
+from app.services.aoty import AOTYService
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -553,3 +556,76 @@ def get_upcoming_albums(db: Session = Depends(get_db)):
     ).order_by(Album.release_date).all()
     
     return albums
+
+
+# ============ New Releases (AOTY Scraping) ============
+
+# Background task lock for AOTY scraping
+_aoty_lock = threading.Lock()
+
+
+def run_aoty_scrape_in_background(year: int = None, week: int = None):
+    """Run the AOTY scrape in a background thread."""
+    db = SessionLocal()
+    try:
+        with _aoty_lock:
+            service = AOTYService(db)
+            service.scrape_weekly_releases(year, week)
+    finally:
+        db.close()
+
+
+@app.post("/api/new-releases/scrape", response_model=NewReleasesScrapeStatusResponse)
+def scrape_new_releases(
+    background_tasks: BackgroundTasks,
+    year: Optional[int] = None,
+    week: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Start scraping new releases from Album of the Year (AOTY).
+    Scrapes the weekly releases sorted by critic score.
+    """
+    service = AOTYService(db)
+    status = service.get_or_create_scrape_status()
+    
+    # If already scraping, return current status
+    if status.status == "scraping":
+        return status
+    
+    # Mark as pending
+    status.status = "scraping"
+    db.commit()
+    db.refresh(status)
+    
+    # Start background scrape
+    background_tasks.add_task(run_aoty_scrape_in_background, year, week)
+    
+    return status
+
+
+@app.get("/api/new-releases/status", response_model=NewReleasesScrapeStatusResponse)
+def get_new_releases_scrape_status(db: Session = Depends(get_db)):
+    """Get the current AOTY scrape status."""
+    service = AOTYService(db)
+    return service.get_or_create_scrape_status()
+
+
+@app.get("/api/new-releases", response_model=List[NewReleaseResponse])
+def get_new_releases(
+    year: Optional[int] = None,
+    week: Optional[int] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    Get new releases from AOTY.
+    If year/week not specified, returns the latest week's releases.
+    Results are sorted by critic score descending.
+    """
+    service = AOTYService(db)
+    
+    if year and week:
+        return service.get_releases(year, week, limit)
+    else:
+        return service.get_latest_releases(limit)

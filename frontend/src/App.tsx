@@ -6,6 +6,7 @@ import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
 import ArtistDetailView from './components/ArtistDetailView';
 import WishlistView from './components/WishlistView';
+import NewReleasesView from './components/NewReleasesView';
 import AlbumModal from './components/AlbumModal';
 import SearchModal from './components/SearchModal';
 
@@ -178,6 +179,10 @@ function App() {
             onAlbumClick={handleAlbumClick}
             onOpenSearch={handleOpenSearch}
           />
+        )}
+
+        {currentView === 'new-releases' && (
+          <NewReleasesView />
         )}
       </main>
 
