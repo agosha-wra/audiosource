@@ -1,10 +1,13 @@
 # Multi-stage build for AudioSource
 
-# Stage 1: Build the frontend (just copy static files)
+# Stage 1: Build the React frontend
 FROM node:20-alpine AS frontend
 
 WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
 COPY frontend/ ./
+RUN npm run build
 
 # Stage 2: Python backend
 FROM python:3.11-slim
@@ -29,8 +32,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY backend/ ./backend/
 
-# Copy frontend static files
-COPY --from=frontend /app/frontend /app/frontend
+# Copy frontend built assets
+COPY --from=frontend /app/frontend/dist /app/frontend
 
 # Install nginx for serving frontend
 RUN apt-get update && apt-get install -y --no-install-recommends nginx \
@@ -46,4 +49,3 @@ RUN chmod +x /entrypoint.sh
 EXPOSE 80
 
 ENTRYPOINT ["/entrypoint.sh"]
-
