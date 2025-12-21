@@ -417,6 +417,10 @@ body::before {
   max-width: 400px;
 }
 
+.empty-state .primary-btn {
+  margin-top: 24px;
+}
+
 /* Loading State */
 .loading {
   display: flex;
@@ -658,18 +662,40 @@ body::before {
 
 .artist-album-counts {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: center;
-  margin-top: 8px;
-  font-size: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.artist-album-counts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.artist-album-counts svg {
+  width: 12px;
+  height: 12px;
 }
 
 .artist-album-counts .owned-count {
+  background: rgba(34, 197, 94, 0.15);
   color: var(--success);
 }
 
 .artist-album-counts .missing-count {
-  color: var(--accent);
+  background: rgba(113, 113, 122, 0.15);
+  color: var(--text-muted);
+}
+
+.artist-album-counts .wishlisted-count {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
 }
 
 /* Artist Detail Page */
@@ -1019,6 +1045,7 @@ body::before {
 .primary-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   padding: 14px 24px;
   background: var(--accent);
@@ -1029,7 +1056,6 @@ body::before {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  margin-top: 20px;
   transition: all var(--transition);
 }
 

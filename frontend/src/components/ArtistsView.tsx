@@ -68,9 +68,28 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
                 <div className="artist-avatar">{getInitials(artist.name)}</div>
                 <div className="artist-name">{artist.name}</div>
                 <div className="artist-album-counts">
-                  <span className="owned-count">{artist.owned_album_count || 0} owned</span>
+                  <span className="owned-count">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                    {artist.owned_album_count || 0}
+                  </span>
                   {(artist.missing_album_count || 0) > 0 && (
-                    <span className="missing-count">{artist.missing_album_count} missing</span>
+                    <span className="missing-count">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M15 9l-6 6M9 9l6 6"/>
+                      </svg>
+                      {artist.missing_album_count}
+                    </span>
+                  )}
+                  {(artist.wishlisted_album_count || 0) > 0 && (
+                    <span className="wishlisted-count">
+                      <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2">
+                        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                      </svg>
+                      {artist.wishlisted_album_count}
+                    </span>
                   )}
                 </div>
               </div>

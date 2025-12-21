@@ -6,7 +6,8 @@ export interface Artist {
   country: string | null;
   created_at: string;
   owned_album_count?: number;
-  missing_album_count?: number;
+  missing_album_count?: number;  // Missing albums NOT in wishlist
+  wishlisted_album_count?: number;  // Missing albums in wishlist
 }
 
 export interface Album {

@@ -179,9 +179,17 @@ def list_artists(
             Album.artist_id == artist.id,
             Album.is_owned == True
         ).count()
+        # Missing albums NOT in wishlist
         missing_count = db.query(Album).filter(
             Album.artist_id == artist.id,
-            Album.is_owned == False
+            Album.is_owned == False,
+            Album.is_wishlisted == False
+        ).count()
+        # Missing albums in wishlist
+        wishlisted_count = db.query(Album).filter(
+            Album.artist_id == artist.id,
+            Album.is_owned == False,
+            Album.is_wishlisted == True
         ).count()
         
         artist_data = ArtistDetailResponse(
@@ -192,7 +200,8 @@ def list_artists(
             country=artist.country,
             created_at=artist.created_at,
             owned_album_count=owned_count,
-            missing_album_count=missing_count
+            missing_album_count=missing_count,
+            wishlisted_album_count=wishlisted_count
         )
         result.append(artist_data)
     
@@ -210,9 +219,17 @@ def get_artist(artist_id: int, db: Session = Depends(get_db)):
         Album.artist_id == artist.id,
         Album.is_owned == True
     ).count()
+    # Missing albums NOT in wishlist
     missing_count = db.query(Album).filter(
         Album.artist_id == artist.id,
-        Album.is_owned == False
+        Album.is_owned == False,
+        Album.is_wishlisted == False
+    ).count()
+    # Missing albums in wishlist
+    wishlisted_count = db.query(Album).filter(
+        Album.artist_id == artist.id,
+        Album.is_owned == False,
+        Album.is_wishlisted == True
     ).count()
     
     return ArtistDetailResponse(
@@ -223,7 +240,8 @@ def get_artist(artist_id: int, db: Session = Depends(get_db)):
         country=artist.country,
         created_at=artist.created_at,
         owned_album_count=owned_count,
-        missing_album_count=missing_count
+        missing_album_count=missing_count,
+        wishlisted_album_count=wishlisted_count
     )
 
 

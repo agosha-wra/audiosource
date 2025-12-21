@@ -22,7 +22,8 @@ class ArtistDetailResponse(ArtistBase):
     id: int
     created_at: datetime
     owned_album_count: int = 0
-    missing_album_count: int = 0
+    missing_album_count: int = 0  # Missing albums NOT in wishlist
+    wishlisted_album_count: int = 0  # Missing albums in wishlist
 
     class Config:
         from_attributes = True
