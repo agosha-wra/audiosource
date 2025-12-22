@@ -435,7 +435,7 @@ body::before {
   text-align: center;
 }
 
-.empty-state svg {
+.empty-state > svg {
   width: 80px;
   height: 80px;
   color: var(--text-muted);
@@ -457,6 +457,13 @@ body::before {
 
 .empty-state .primary-btn {
   margin-top: 24px;
+}
+
+.empty-state .primary-btn svg {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 0;
+  opacity: 1;
 }
 
 /* Loading State */
@@ -1240,7 +1247,7 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   padding: 14px 24px;
   background: var(--accent);
   color: white;
@@ -1251,6 +1258,7 @@ body::before {
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
+  line-height: 1;
 }
 
 .primary-btn:hover {
@@ -1260,8 +1268,14 @@ body::before {
 }
 
 .primary-btn svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.primary-btn span {
+  line-height: 1;
 }
 
 /* ============ Search Modal ============ */
