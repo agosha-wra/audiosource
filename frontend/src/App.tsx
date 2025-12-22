@@ -10,9 +10,77 @@ import NewReleasesView from './components/NewReleasesView';
 import AlbumModal from './components/AlbumModal';
 import SearchModal from './components/SearchModal';
 
+// Parse URL to get current state
+function getStateFromURL(): { view: View; artistId: number | null; year?: number; week?: number } {
+  const params = new URLSearchParams(window.location.search);
+  const path = window.location.pathname;
+  
+  // Parse view from path
+  let view: View = 'albums';
+  let artistId: number | null = null;
+  
+  if (path === '/artists' || path.startsWith('/artists')) {
+    const artistMatch = path.match(/\/artists\/(\d+)/);
+    if (artistMatch) {
+      view = 'artist-detail';
+      artistId = parseInt(artistMatch[1], 10);
+    } else {
+      view = 'artists';
+    }
+  } else if (path === '/wishlist') {
+    view = 'wishlist';
+  } else if (path === '/new-releases') {
+    view = 'new-releases';
+  } else {
+    view = 'albums';
+  }
+  
+  // Parse year/week from query params
+  const year = params.get('year') ? parseInt(params.get('year')!, 10) : undefined;
+  const week = params.get('week') ? parseInt(params.get('week')!, 10) : undefined;
+  
+  return { view, artistId, year, week };
+}
+
+// Update URL without reload
+function updateURL(view: View, artistId?: number | null, year?: number, week?: number) {
+  let path = '/';
+  const params = new URLSearchParams();
+  
+  switch (view) {
+    case 'albums':
+      path = '/';
+      break;
+    case 'artists':
+      path = '/artists';
+      break;
+    case 'artist-detail':
+      path = artistId ? `/artists/${artistId}` : '/artists';
+      break;
+    case 'wishlist':
+      path = '/wishlist';
+      break;
+    case 'new-releases':
+      path = '/new-releases';
+      if (year) params.set('year', year.toString());
+      if (week) params.set('week', week.toString());
+      break;
+  }
+  
+  const search = params.toString();
+  const url = search ? `${path}?${search}` : path;
+  window.history.pushState({}, '', url);
+}
+
 function App() {
-  const [currentView, setCurrentView] = useState<View>('albums');
-  const [currentArtistId, setCurrentArtistId] = useState<number | null>(null);
+  // Initialize from URL
+  const initialState = getStateFromURL();
+  
+  const [currentView, setCurrentView] = useState<View>(initialState.view);
+  const [currentArtistId, setCurrentArtistId] = useState<number | null>(initialState.artistId);
+  const [initialYear] = useState<number | undefined>(initialState.year);
+  const [initialWeek] = useState<number | undefined>(initialState.week);
+  
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [stats, setStats] = useState<Stats>({ album_count: 0, missing_album_count: 0, wishlist_count: 0, artist_count: 0 });
@@ -21,6 +89,18 @@ function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isCheckingUpcoming, setIsCheckingUpcoming] = useState(false);
   const [wishlistKey, setWishlistKey] = useState(0);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handlePopState = () => {
+      const state = getStateFromURL();
+      setCurrentView(state.view);
+      setCurrentArtistId(state.artistId);
+    };
+    
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -109,11 +189,13 @@ function App() {
   const handleNavigate = (view: View) => {
     setCurrentView(view);
     setCurrentArtistId(null);
+    updateURL(view);
   };
 
   const handleArtistClick = (artistId: number) => {
     setCurrentArtistId(artistId);
     setCurrentView('artist-detail');
+    updateURL('artist-detail', artistId);
   };
 
   const handleAlbumClick = (albumId: number) => {
@@ -127,6 +209,7 @@ function App() {
   const handleBackToArtists = () => {
     setCurrentView('artists');
     setCurrentArtistId(null);
+    updateURL('artists');
   };
 
   const handleOpenSearch = () => {
@@ -140,6 +223,11 @@ function App() {
   const handleAlbumAddedToWishlist = () => {
     refreshStats();
     setWishlistKey(prev => prev + 1);
+  };
+
+  // Callback for NewReleasesView to update URL when week changes
+  const handleWeekChange = (year: number, week: number) => {
+    updateURL('new-releases', null, year, week);
   };
 
   return (
@@ -182,7 +270,12 @@ function App() {
         )}
 
         {currentView === 'new-releases' && (
-          <NewReleasesView onWishlistChange={handleAlbumAddedToWishlist} />
+          <NewReleasesView 
+            onWishlistChange={handleAlbumAddedToWishlist}
+            initialYear={initialYear}
+            initialWeek={initialWeek}
+            onWeekChange={handleWeekChange}
+          />
         )}
       </main>
 

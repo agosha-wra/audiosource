@@ -4,6 +4,9 @@ import { getNewReleases, scrapeNewReleases, getNewReleasesScrapeStatus, addToWis
 
 interface NewReleasesViewProps {
   onWishlistChange?: () => void;
+  initialYear?: number;
+  initialWeek?: number;
+  onWeekChange?: (year: number, week: number) => void;
 }
 
 // Get ISO week number and year for a given date
@@ -46,11 +49,11 @@ function navigateWeek(year: number, week: number, delta: number): { year: number
   return getISOWeek(start);
 }
 
-export default function NewReleasesView({ onWishlistChange }: NewReleasesViewProps) {
-  // Initialize with current week
+export default function NewReleasesView({ onWishlistChange, initialYear, initialWeek, onWeekChange }: NewReleasesViewProps) {
+  // Initialize with URL params or current week
   const currentWeek = getISOWeek(new Date());
-  const [selectedYear, setSelectedYear] = useState(currentWeek.year);
-  const [selectedWeek, setSelectedWeek] = useState(currentWeek.week);
+  const [selectedYear, setSelectedYear] = useState(initialYear || currentWeek.year);
+  const [selectedWeek, setSelectedWeek] = useState(initialWeek || currentWeek.week);
   
   const [releases, setReleases] = useState<NewRelease[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,6 +119,7 @@ export default function NewReleasesView({ onWishlistChange }: NewReleasesViewPro
     const prev = navigateWeek(selectedYear, selectedWeek, -1);
     setSelectedYear(prev.year);
     setSelectedWeek(prev.week);
+    onWeekChange?.(prev.year, prev.week);
   };
 
   const handleNextWeek = () => {
@@ -126,11 +130,13 @@ export default function NewReleasesView({ onWishlistChange }: NewReleasesViewPro
     }
     setSelectedYear(next.year);
     setSelectedWeek(next.week);
+    onWeekChange?.(next.year, next.week);
   };
 
   const handleCurrentWeek = () => {
     setSelectedYear(currentWeek.year);
     setSelectedWeek(currentWeek.week);
+    onWeekChange?.(currentWeek.year, currentWeek.week);
   };
 
   const isCurrentWeek = selectedYear === currentWeek.year && selectedWeek === currentWeek.week;
