@@ -592,16 +592,41 @@ class ScannerService:
             self.db.commit()
 
             # Scan each folder (this will also organize files)
+            scanned_paths = set()
             for i, folder_path in enumerate(album_folders):
                 status.current_folder = folder_path
                 status.scanned_folders = i + 1
                 self.db.commit()
 
                 try:
-                    self.scan_album_folder(folder_path, force_rescan)
+                    album = self.scan_album_folder(folder_path, force_rescan)
+                    if album and album.folder_path:
+                        scanned_paths.add(album.folder_path)
                 except Exception as e:
                     print(f"Error scanning {folder_path}: {e}")
                     continue
+
+            # Check for albums that no longer exist on disk
+            print("Checking for deleted albums...")
+            owned_albums = self.db.query(Album).filter(
+                Album.is_owned == True,
+                Album.folder_path.isnot(None)
+            ).all()
+            
+            deleted_count = 0
+            for album in owned_albums:
+                # Check if folder still exists
+                if album.folder_path and not Path(album.folder_path).exists():
+                    print(f"Album folder deleted: {album.title} ({album.folder_path})")
+                    album.is_owned = False
+                    album.folder_path = None
+                    # Delete associated tracks since files are gone
+                    self.db.query(Track).filter(Track.album_id == album.id).delete()
+                    deleted_count += 1
+            
+            if deleted_count > 0:
+                self.db.commit()
+                print(f"Marked {deleted_count} albums as no longer owned (folders deleted)")
 
             # After scanning owned albums, fetch discographies for all artists
             print("Fetching artist discographies...")
