@@ -626,6 +626,36 @@ def get_new_releases(
     service = AOTYService(db)
     
     if year and week:
-        return service.get_releases(year, week, limit)
+        releases = service.get_releases(year, week, limit)
     else:
-        return service.get_latest_releases(limit)
+        releases = service.get_latest_releases(limit)
+    
+    # Enrich with database status (owned/wishlisted)
+    result = []
+    for release in releases:
+        # Try to find matching album in database by title and artist name
+        # Use case-insensitive matching
+        matching_album = db.query(Album).join(Artist).filter(
+            func.lower(Album.title) == func.lower(release.album_title),
+            func.lower(Artist.name) == func.lower(release.artist_name)
+        ).first()
+        
+        result.append(NewReleaseResponse(
+            id=release.id,
+            artist_name=release.artist_name,
+            album_title=release.album_title,
+            release_date=release.release_date,
+            release_type=release.release_type,
+            aoty_url=release.aoty_url,
+            cover_art_url=release.cover_art_url,
+            critic_score=release.critic_score,
+            num_critics=release.num_critics,
+            week_year=release.week_year,
+            week_number=release.week_number,
+            scraped_at=release.scraped_at,
+            existing_album_id=matching_album.id if matching_album else None,
+            is_owned=matching_album.is_owned if matching_album else False,
+            is_wishlisted=matching_album.is_wishlisted if matching_album else False,
+        ))
+    
+    return result

@@ -1859,6 +1859,12 @@ body::before {
   color: #ef4444;
 }
 
+.new-release-wishlist-btn.owned {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: #22c55e;
+  color: #22c55e;
+}
+
 .new-release-wishlist-btn svg {
   width: 20px;
   height: 20px;

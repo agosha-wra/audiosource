@@ -139,11 +139,22 @@ export default function NewReleasesView({ onWishlistChange }: NewReleasesViewPro
     setFailedImages(prev => new Set(prev).add(id));
   };
 
+  // Check if a release is already in our library (owned or wishlisted)
+  const isInLibrary = (release: NewRelease) => {
+    return release.is_owned || release.is_wishlisted || wishlisted.has(release.id);
+  };
+
+  const getButtonState = (release: NewRelease): 'owned' | 'wishlisted' | 'available' => {
+    if (release.is_owned) return 'owned';
+    if (release.is_wishlisted || wishlisted.has(release.id)) return 'wishlisted';
+    return 'available';
+  };
+
   const handleAddToWishlist = async (e: React.MouseEvent, release: NewRelease) => {
     e.preventDefault();
     e.stopPropagation();
     
-    if (wishlisted.has(release.id) || addingToWishlist.has(release.id)) return;
+    if (isInLibrary(release) || addingToWishlist.has(release.id)) return;
     
     setAddingToWishlist(prev => new Set(prev).add(release.id));
     
@@ -345,15 +356,23 @@ export default function NewReleasesView({ onWishlistChange }: NewReleasesViewPro
                   </div>
                 </a>
                 <button
-                  className={`new-release-wishlist-btn ${wishlisted.has(release.id) ? 'wishlisted' : ''}`}
+                  className={`new-release-wishlist-btn ${getButtonState(release)}`}
                   onClick={(e) => handleAddToWishlist(e, release)}
-                  disabled={wishlisted.has(release.id) || addingToWishlist.has(release.id)}
-                  title={wishlisted.has(release.id) ? 'Added to wishlist' : 'Add to wishlist'}
+                  disabled={isInLibrary(release) || addingToWishlist.has(release.id)}
+                  title={
+                    release.is_owned ? 'Already in library' :
+                    (release.is_wishlisted || wishlisted.has(release.id)) ? 'In wishlist' :
+                    'Add to wishlist'
+                  }
                 >
                   {addingToWishlist.has(release.id) ? (
                     <div className="btn-spinner" />
+                  ) : release.is_owned ? (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="20,6 9,17 4,12"/>
+                    </svg>
                   ) : (
-                    <svg viewBox="0 0 24 24" fill={wishlisted.has(release.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                    <svg viewBox="0 0 24 24" fill={(release.is_wishlisted || wishlisted.has(release.id)) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
                       <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                     </svg>
                   )}

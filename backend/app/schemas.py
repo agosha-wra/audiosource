@@ -167,6 +167,10 @@ class NewReleaseResponse(BaseModel):
     week_year: int
     week_number: int
     scraped_at: datetime
+    # Database status
+    existing_album_id: Optional[int] = None
+    is_owned: bool = False
+    is_wishlisted: bool = False
 
     class Config:
         from_attributes = True

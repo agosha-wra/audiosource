@@ -106,6 +106,10 @@ export interface NewRelease {
   week_year: number;
   week_number: number;
   scraped_at: string;
+  // Database status
+  existing_album_id: number | null;
+  is_owned: boolean;
+  is_wishlisted: boolean;
 }
 
 export interface NewReleasesScrapeStatus {
