@@ -282,31 +282,77 @@ class MusicBrainzService:
     @classmethod
     def get_artist_image_url(cls, musicbrainz_id: str) -> Optional[str]:
         """
-        Get artist image URL from Fanart.tv.
-        Falls back to a placeholder if not found.
+        Get artist image URL. Tries multiple sources:
+        1. Fanart.tv (if API key is set)
+        2. Wikidata/Wikipedia via MusicBrainz relations
         """
         import os
-        api_key = os.environ.get("FANART_TV_API_KEY", "")
         
-        if not api_key:
-            # No API key configured
-            return None
-            
+        # Try Fanart.tv first if API key is available
+        api_key = os.environ.get("FANART_TV_API_KEY", "")
+        if api_key:
+            try:
+                url = f"https://webservice.fanart.tv/v3/music/{musicbrainz_id}?api_key={api_key}"
+                response = requests.get(url, timeout=5)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    thumbs = data.get("artistthumb", [])
+                    if thumbs:
+                        return thumbs[0].get("url")
+                    backgrounds = data.get("artistbackground", [])
+                    if backgrounds:
+                        return backgrounds[0].get("url")
+            except Exception as e:
+                print(f"Error fetching from Fanart.tv: {e}")
+        
+        # Fallback: Try to get image from Wikidata via MusicBrainz
         try:
-            url = f"https://webservice.fanart.tv/v3/music/{musicbrainz_id}?api_key={api_key}"
-            response = requests.get(url, timeout=5)
+            # Get artist info with URL relations
+            cls._rate_limit()
+            result = musicbrainzngs.get_artist_by_id(
+                musicbrainz_id,
+                includes=["url-rels"]
+            )
             
-            if response.status_code == 200:
-                data = response.json()
-                # Try artistthumb first, then artistbackground
-                thumbs = data.get("artistthumb", [])
-                if thumbs:
-                    return thumbs[0].get("url")
-                backgrounds = data.get("artistbackground", [])
-                if backgrounds:
-                    return backgrounds[0].get("url")
+            artist = result.get("artist", {})
+            url_relations = artist.get("url-relation-list", [])
+            
+            # Look for Wikidata URL
+            wikidata_id = None
+            for rel in url_relations:
+                rel_type = rel.get("type", "")
+                url = rel.get("target", "")
+                if "wikidata" in rel_type or "wikidata.org" in url:
+                    # Extract Q-ID from URL like https://www.wikidata.org/wiki/Q123
+                    wikidata_id = url.split("/")[-1]
+                    break
+            
+            if wikidata_id:
+                # Query Wikidata for image
+                wikidata_url = f"https://www.wikidata.org/wiki/Special:EntityData/{wikidata_id}.json"
+                headers = {"User-Agent": "AudioSource/1.0 (https://github.com/audiosource)"}
+                response = requests.get(wikidata_url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    entity = data.get("entities", {}).get(wikidata_id, {})
+                    claims = entity.get("claims", {})
+                    
+                    # P18 is the property for "image"
+                    if "P18" in claims:
+                        image_claim = claims["P18"][0]
+                        image_name = image_claim.get("mainsnak", {}).get("datavalue", {}).get("value", "")
+                        if image_name:
+                            # Convert to Wikimedia Commons URL
+                            image_name_encoded = image_name.replace(" ", "_")
+                            # Use MD5 hash for path
+                            import hashlib
+                            md5 = hashlib.md5(image_name_encoded.encode()).hexdigest()
+                            image_url = f"https://upload.wikimedia.org/wikipedia/commons/{md5[0]}/{md5[0:2]}/{image_name_encoded}"
+                            return image_url
+                            
         except Exception as e:
-            print(f"Error fetching artist image from Fanart.tv: {e}")
+            print(f"Error fetching from Wikidata: {e}")
         
         return None
 

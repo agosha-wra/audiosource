@@ -216,6 +216,7 @@ def list_artists(
             musicbrainz_id=artist.musicbrainz_id,
             sort_name=artist.sort_name,
             country=artist.country,
+            image_url=artist.image_url,
             created_at=artist.created_at,
             owned_album_count=owned_count,
             missing_album_count=missing_count,
@@ -256,6 +257,7 @@ def get_artist(artist_id: int, db: Session = Depends(get_db)):
         musicbrainz_id=artist.musicbrainz_id,
         sort_name=artist.sort_name,
         country=artist.country,
+        image_url=artist.image_url,
         created_at=artist.created_at,
         owned_album_count=owned_count,
         missing_album_count=missing_count,
@@ -285,6 +287,34 @@ def get_artist_albums(
     # Sort: owned albums first, then by release date
     albums = query.order_by(Album.is_owned.desc(), Album.release_date.desc()).all()
     return albums
+
+
+@app.post("/api/artists/refresh-images")
+def refresh_artist_images(db: Session = Depends(get_db)):
+    """Refresh images for all artists that don't have one."""
+    from app.services.musicbrainz import MusicBrainzService
+    
+    artists = db.query(Artist).filter(
+        Artist.musicbrainz_id != None,
+        Artist.image_url == None
+    ).all()
+    
+    updated = 0
+    for artist in artists:
+        try:
+            image_url = MusicBrainzService.get_artist_image_url(artist.musicbrainz_id)
+            if image_url:
+                # Update using a direct query to ensure it persists
+                db.query(Artist).filter(Artist.id == artist.id).update(
+                    {"image_url": image_url}
+                )
+                db.commit()
+                updated += 1
+                print(f"Updated image for {artist.name}: {image_url}")
+        except Exception as e:
+            print(f"Error getting image for {artist.name}: {e}")
+    
+    return {"message": f"Updated {updated} artist images", "total_checked": len(artists)}
 
 
 @app.delete("/api/artists/{artist_id}")
