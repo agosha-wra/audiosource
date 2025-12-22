@@ -182,7 +182,7 @@ function App() {
         )}
 
         {currentView === 'new-releases' && (
-          <NewReleasesView />
+          <NewReleasesView onWishlistChange={handleAlbumAddedToWishlist} />
         )}
       </main>
 

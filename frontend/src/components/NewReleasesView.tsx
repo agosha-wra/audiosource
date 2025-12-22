@@ -1,13 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { NewRelease, NewReleasesScrapeStatus } from '../types';
-import { getNewReleases, scrapeNewReleases, getNewReleasesScrapeStatus } from '../api';
+import { getNewReleases, scrapeNewReleases, getNewReleasesScrapeStatus, addToWishlist } from '../api';
 
-export default function NewReleasesView() {
+interface NewReleasesViewProps {
+  onWishlistChange?: () => void;
+}
+
+export default function NewReleasesView({ onWishlistChange }: NewReleasesViewProps) {
   const [releases, setReleases] = useState<NewRelease[]>([]);
   const [loading, setLoading] = useState(true);
   const [scrapeStatus, setScrapeStatus] = useState<NewReleasesScrapeStatus | null>(null);
   const [isScraping, setIsScraping] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
+  const [wishlisted, setWishlisted] = useState<Set<number>>(new Set());
+  const [addingToWishlist, setAddingToWishlist] = useState<Set<number>>(new Set());
 
   const fetchReleases = useCallback(async () => {
     try {
@@ -61,6 +67,36 @@ export default function NewReleasesView() {
 
   const handleImageError = (id: number) => {
     setFailedImages(prev => new Set(prev).add(id));
+  };
+
+  const handleAddToWishlist = async (e: React.MouseEvent, release: NewRelease) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (wishlisted.has(release.id) || addingToWishlist.has(release.id)) return;
+    
+    setAddingToWishlist(prev => new Set(prev).add(release.id));
+    
+    try {
+      await addToWishlist({
+        title: release.album_title,
+        artist_name: release.artist_name,
+        release_date: release.release_date || undefined,
+        release_type: release.release_type || undefined,
+        cover_art_url: release.cover_art_url || undefined,
+      });
+      
+      setWishlisted(prev => new Set(prev).add(release.id));
+      onWishlistChange?.();
+    } catch (error) {
+      console.error('Error adding to wishlist:', error);
+    } finally {
+      setAddingToWishlist(prev => {
+        const next = new Set(prev);
+        next.delete(release.id);
+        return next;
+      });
+    }
   };
 
   const getScoreColor = (score: number | null) => {
@@ -147,63 +183,78 @@ export default function NewReleasesView() {
         ) : (
           <div className="new-releases-grid">
             {releases.map((release, index) => (
-              <a
-                key={release.id}
-                href={release.aoty_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="new-release-card"
-              >
-                <div className="new-release-rank">#{index + 1}</div>
-                <div className="new-release-cover">
-                  {release.cover_art_url && !failedImages.has(release.id) ? (
-                    <img 
-                      src={release.cover_art_url} 
-                      alt={release.album_title}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      onError={() => handleImageError(release.id)}
-                    />
-                  ) : (
-                    <div className="cover-placeholder">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <circle cx="12" cy="12" r="10"/>
-                        <circle cx="12" cy="12" r="3"/>
-                      </svg>
-                    </div>
-                  )}
-                  {release.critic_score !== null && (
-                    <div 
-                      className="critic-score"
-                      style={{ backgroundColor: getScoreColor(release.critic_score) }}
-                    >
-                      {release.critic_score}
-                    </div>
-                  )}
-                </div>
-                <div className="new-release-info">
-                  <div className="new-release-title">{release.album_title}</div>
-                  <div className="new-release-artist">{release.artist_name}</div>
-                  <div className="new-release-meta">
-                    <span className="release-type">{release.release_type || 'LP'}</span>
-                    <span className="meta-separator">•</span>
-                    <span className="release-date">{release.release_date || 'TBA'}</span>
-                    {release.num_critics !== null && release.num_critics > 0 && (
-                      <>
-                        <span className="meta-separator">•</span>
-                        <span className="num-critics">{release.num_critics} reviews</span>
-                      </>
+              <div key={release.id} className="new-release-row">
+                <a
+                  href={release.aoty_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="new-release-card"
+                >
+                  <div className="new-release-rank">#{index + 1}</div>
+                  <div className="new-release-cover">
+                    {release.cover_art_url && !failedImages.has(release.id) ? (
+                      <img 
+                        src={release.cover_art_url} 
+                        alt={release.album_title}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        onError={() => handleImageError(release.id)}
+                      />
+                    ) : (
+                      <div className="cover-placeholder">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <circle cx="12" cy="12" r="10"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </div>
+                    )}
+                    {release.critic_score !== null && (
+                      <div 
+                        className="critic-score"
+                        style={{ backgroundColor: getScoreColor(release.critic_score) }}
+                      >
+                        {release.critic_score}
+                      </div>
                     )}
                   </div>
-                </div>
-                <div className="aoty-link">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
-                    <polyline points="15,3 21,3 21,9"/>
-                    <line x1="10" y1="14" x2="21" y2="3"/>
-                  </svg>
-                </div>
-              </a>
+                  <div className="new-release-info">
+                    <div className="new-release-title">{release.album_title}</div>
+                    <div className="new-release-artist">{release.artist_name}</div>
+                    <div className="new-release-meta">
+                      <span className="release-type">{release.release_type || 'LP'}</span>
+                      <span className="meta-separator">•</span>
+                      <span className="release-date">{release.release_date || 'TBA'}</span>
+                      {release.num_critics !== null && release.num_critics > 0 && (
+                        <>
+                          <span className="meta-separator">•</span>
+                          <span className="num-critics">{release.num_critics} reviews</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="aoty-link">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+                      <polyline points="15,3 21,3 21,9"/>
+                      <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                  </div>
+                </a>
+                <button
+                  className={`new-release-wishlist-btn ${wishlisted.has(release.id) ? 'wishlisted' : ''}`}
+                  onClick={(e) => handleAddToWishlist(e, release)}
+                  disabled={wishlisted.has(release.id) || addingToWishlist.has(release.id)}
+                  title={wishlisted.has(release.id) ? 'Added to wishlist' : 'Add to wishlist'}
+                >
+                  {addingToWishlist.has(release.id) ? (
+                    <div className="btn-spinner" />
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill={wishlisted.has(release.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
             ))}
           </div>
         )}

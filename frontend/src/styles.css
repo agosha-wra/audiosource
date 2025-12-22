@@ -1727,8 +1727,71 @@ body::before {
   height: 16px;
 }
 
+/* New Release Row with Wishlist Button */
+.new-release-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.new-release-row .new-release-card {
+  flex: 1;
+}
+
+.new-release-wishlist-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.new-release-wishlist-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.new-release-wishlist-btn:disabled {
+  cursor: default;
+}
+
+.new-release-wishlist-btn.wishlisted {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.new-release-wishlist-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.new-release-wishlist-btn .btn-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
+  .new-release-row {
+    gap: 6px;
+  }
+  
+  .new-release-wishlist-btn {
+    width: 40px;
+  }
+  
   .new-release-card {
     grid-template-columns: 30px 60px 1fr auto;
     gap: 12px;
