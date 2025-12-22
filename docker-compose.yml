@@ -22,6 +22,7 @@ services:
     environment:
       DATABASE_URL: postgresql://audiosource:audiosource@db:5432/audiosource
       MUSIC_FOLDER: /music
+      FANART_TV_API_KEY: ${FANART_TV_API_KEY:-}
     ports:
       - "8080:80"
     volumes:

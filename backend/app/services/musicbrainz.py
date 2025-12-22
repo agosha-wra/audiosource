@@ -285,9 +285,15 @@ class MusicBrainzService:
         Get artist image URL from Fanart.tv.
         Falls back to a placeholder if not found.
         """
+        import os
+        api_key = os.environ.get("FANART_TV_API_KEY", "")
+        
+        if not api_key:
+            # No API key configured
+            return None
+            
         try:
-            # Fanart.tv API - free tier, no API key needed for basic access
-            url = f"https://webservice.fanart.tv/v3/music/{musicbrainz_id}?api_key=1"
+            url = f"https://webservice.fanart.tv/v3/music/{musicbrainz_id}?api_key={api_key}"
             response = requests.get(url, timeout=5)
             
             if response.status_code == 200:

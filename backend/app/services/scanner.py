@@ -180,6 +180,12 @@ class ScannerService:
                 if sort_name and not artist.sort_name:
                     artist.sort_name = sort_name
                     self.db.commit()
+                # Fetch image if missing
+                if not artist.image_url and artist.musicbrainz_id:
+                    image_url = MusicBrainzService.get_artist_image_url(artist.musicbrainz_id)
+                    if image_url:
+                        artist.image_url = image_url
+                        self.db.commit()
                 return artist
 
         # Try to find by name
@@ -191,6 +197,12 @@ class ScannerService:
                 if sort_name and not artist.sort_name:
                     artist.sort_name = sort_name
                 self.db.commit()
+            # Fetch image if missing
+            if not artist.image_url and artist.musicbrainz_id:
+                image_url = MusicBrainzService.get_artist_image_url(artist.musicbrainz_id)
+                if image_url:
+                    artist.image_url = image_url
+                    self.db.commit()
             return artist
 
         # Create new artist
@@ -198,6 +210,14 @@ class ScannerService:
         self.db.add(artist)
         self.db.commit()
         self.db.refresh(artist)
+        
+        # Fetch image for new artist
+        if artist.musicbrainz_id:
+            image_url = MusicBrainzService.get_artist_image_url(artist.musicbrainz_id)
+            if image_url:
+                artist.image_url = image_url
+                self.db.commit()
+        
         return artist
 
     def _is_properly_organized(
