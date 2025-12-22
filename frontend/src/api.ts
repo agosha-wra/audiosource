@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus } from './types';
 
 const API_BASE = '/api';
 
@@ -115,4 +115,37 @@ export async function scrapeNewReleases(year?: number, week?: number): Promise<N
 
 export async function getNewReleasesScrapeStatus(): Promise<NewReleasesScrapeStatus> {
   return fetchApi<NewReleasesScrapeStatus>('/new-releases/status');
+}
+
+// Downloads (slskd integration)
+export async function getSlskdStatus(): Promise<SlskdStatus> {
+  return fetchApi<SlskdStatus>('/downloads/slskd-status');
+}
+
+export async function getDownloads(): Promise<Download[]> {
+  return fetchApi<Download[]>('/downloads');
+}
+
+export async function getDownload(downloadId: number): Promise<Download> {
+  return fetchApi<Download>(`/downloads/${downloadId}`);
+}
+
+export async function startDownload(albumId: number): Promise<Download> {
+  return fetchApi<Download>(`/downloads/${albumId}`, { method: 'POST' });
+}
+
+export async function moveDownload(downloadId: number): Promise<void> {
+  await fetchApi(`/downloads/${downloadId}/move`, { method: 'POST' });
+}
+
+export async function retryDownload(downloadId: number): Promise<Download> {
+  return fetchApi<Download>(`/downloads/${downloadId}/retry`, { method: 'POST' });
+}
+
+export async function cancelDownload(downloadId: number): Promise<Download> {
+  return fetchApi<Download>(`/downloads/${downloadId}/cancel`, { method: 'POST' });
+}
+
+export async function deleteDownload(downloadId: number): Promise<void> {
+  await fetchApi(`/downloads/${downloadId}`, { method: 'DELETE' });
 }

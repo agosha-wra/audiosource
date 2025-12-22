@@ -121,4 +121,29 @@ export interface NewReleasesScrapeStatus {
   error_message: string | null;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases';
+// Downloads (slskd integration)
+export interface Download {
+  id: number;
+  album_id: number | null;
+  artist_name: string;
+  album_title: string;
+  slskd_username: string | null;
+  total_files: number;
+  completed_files: number;
+  total_bytes: number;
+  completed_bytes: number;
+  status: 'pending' | 'searching' | 'downloading' | 'completed' | 'failed' | 'moved' | 'cancelled';
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  progress_percent: number;
+}
+
+export interface SlskdStatus {
+  enabled: boolean;
+  available: boolean;
+  url: string | null;
+}
+
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads';

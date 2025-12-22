@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import type { Album } from '../types';
-import { getWishlist, removeFromWishlist } from '../api';
+import { useState, useEffect, useCallback } from 'react';
+import type { Album, SlskdStatus } from '../types';
+import { getWishlist, removeFromWishlist, getSlskdStatus, startDownload } from '../api';
 import AlbumCard from './AlbumCard';
 
 interface WishlistViewProps {
@@ -11,6 +11,17 @@ interface WishlistViewProps {
 export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistViewProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
+  const [slskdStatus, setSlskdStatus] = useState<SlskdStatus | null>(null);
+  const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
+
+  const fetchSlskdStatus = useCallback(async () => {
+    try {
+      const status = await getSlskdStatus();
+      setSlskdStatus(status);
+    } catch (error) {
+      console.error('Error fetching slskd status:', error);
+    }
+  }, []);
 
   const fetchWishlist = async () => {
     try {
@@ -25,7 +36,8 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
 
   useEffect(() => {
     fetchWishlist();
-  }, []);
+    fetchSlskdStatus();
+  }, [fetchSlskdStatus]);
 
   const handleRemove = async (e: React.MouseEvent, albumId: number) => {
     e.stopPropagation();
@@ -37,12 +49,36 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
     }
   };
 
+  const handleDownload = async (e: React.MouseEvent, albumId: number) => {
+    e.stopPropagation();
+    if (downloadingIds.has(albumId)) return;
+    
+    setDownloadingIds(prev => new Set(prev).add(albumId));
+    
+    try {
+      await startDownload(albumId);
+      // Keep the downloading state to show feedback
+    } catch (error) {
+      console.error('Error starting download:', error);
+      setDownloadingIds(prev => {
+        const next = new Set(prev);
+        next.delete(albumId);
+        return next;
+      });
+    }
+  };
+
   // Check if album is upcoming (future release date)
+  // Only works with ISO format dates (YYYY-MM-DD)
   const isUpcoming = (album: Album) => {
     if (!album.release_date) return false;
+    // Only do comparison if it looks like an ISO date
+    if (!/^\d{4}-\d{2}-\d{2}/.test(album.release_date)) return false;
     const today = new Date().toISOString().split('T')[0];
     return album.release_date > today;
   };
+
+  const canDownload = slskdStatus?.enabled && slskdStatus?.available;
 
   return (
     <>
@@ -93,6 +129,26 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
                       <polyline points="12,6 12,12 16,14"/>
                     </svg>
                   </div>
+                )}
+                {canDownload && !isUpcoming(album) && (
+                  <button 
+                    className={`download-wishlist-btn ${downloadingIds.has(album.id) ? 'downloading' : ''}`}
+                    onClick={(e) => handleDownload(e, album.id)}
+                    title={downloadingIds.has(album.id) ? 'Download started...' : 'Download from Soulseek'}
+                    disabled={downloadingIds.has(album.id)}
+                  >
+                    {downloadingIds.has(album.id) ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="spin">
+                        <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                      </svg>
+                    )}
+                  </button>
                 )}
                 <button 
                   className="remove-wishlist-btn"

@@ -8,7 +8,7 @@ import threading
 import asyncio
 
 from app.database import get_db, engine, Base, SessionLocal
-from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus
+from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus, Download
 from app.schemas import (
     AlbumResponse,
     AlbumDetailResponse,
@@ -23,6 +23,8 @@ from app.schemas import (
     UpcomingReleasesStatusResponse,
     NewReleaseResponse,
     NewReleasesScrapeStatusResponse,
+    DownloadResponse,
+    SlskdStatusResponse,
 )
 from app.services.scanner import ScannerService
 from app.services.musicbrainz import MusicBrainzService
@@ -107,6 +109,12 @@ async def scheduled_scan_loop():
                         print(f"Starting scheduled upcoming releases check at {now}")
                         thread = threading.Thread(target=run_upcoming_check_in_background)
                         thread.start()
+                
+                # Check for timed out downloads (every minute)
+                service = SlskdService(db)
+                timed_out = service.check_and_timeout_downloads(timeout_minutes=5)
+                if timed_out > 0:
+                    print(f"Timed out {timed_out} stuck downloads")
             finally:
                 db.close()
         except Exception as e:
@@ -180,6 +188,72 @@ def get_album(album_id: int, db: Session = Depends(get_db)):
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
     return album
+
+
+@app.post("/api/albums/refresh-covers")
+def refresh_album_covers(
+    force: bool = False,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    """Refresh cover art URLs for albums. Use force=true to refresh all, otherwise only missing."""
+    def refresh_covers_task(force_all: bool):
+        db_local = SessionLocal()
+        try:
+            if force_all:
+                # Refresh all albums with musicbrainz_id
+                albums = db_local.query(Album).filter(
+                    Album.musicbrainz_id != None
+                ).all()
+            else:
+                # Only refresh albums without cover art
+                albums = db_local.query(Album).filter(
+                    Album.cover_art_url == None,
+                    Album.musicbrainz_id != None
+                ).all()
+            
+            refreshed = 0
+            for album in albums:
+                # Try to get release group ID from MusicBrainz
+                release_details = MusicBrainzService.get_release_details(album.musicbrainz_id)
+                if release_details:
+                    release_group = release_details.get("release-group", {})
+                    rg_id = release_group.get("id")
+                    if rg_id:
+                        album.cover_art_url = MusicBrainzService.get_release_group_cover_art_url(rg_id)
+                        refreshed += 1
+                    else:
+                        # Fallback to release cover
+                        album.cover_art_url = MusicBrainzService.get_cover_art_url(album.musicbrainz_id)
+                        refreshed += 1
+            
+            db_local.commit()
+            print(f"Refreshed cover art for {refreshed} albums")
+        except Exception as e:
+            print(f"Error refreshing covers: {e}")
+        finally:
+            db_local.close()
+    
+    if force:
+        # Count all albums with musicbrainz_id
+        count = db.query(Album).filter(Album.musicbrainz_id != None).count()
+        if count > 0:
+            background_tasks.add_task(refresh_covers_task, True)
+            return {"message": f"Force refreshing cover art for {count} albums in the background"}
+        else:
+            return {"message": "No albums with MusicBrainz IDs to refresh"}
+    else:
+        # Count albums needing refresh
+        count = db.query(Album).filter(
+            Album.cover_art_url == None,
+            Album.musicbrainz_id != None
+        ).count()
+        
+        if count > 0:
+            background_tasks.add_task(refresh_covers_task, False)
+            return {"message": f"Refreshing cover art for {count} albums in the background"}
+        else:
+            return {"message": "No albums need cover art refresh"}
 
 
 @app.get("/api/artists", response_model=List[ArtistDetailResponse])
@@ -752,3 +826,301 @@ def get_new_releases(
         ))
     
     return result
+
+
+# ============ Downloads (slskd Integration) ============
+
+from app.services.slskd import SlskdService, slskd_config
+
+# Background task lock for downloads
+_download_lock = threading.Lock()
+
+
+def run_download_in_background(download_id: int):
+    """Run the album download in a background thread."""
+    db = SessionLocal()
+    try:
+        with _download_lock:
+            service = SlskdService(db)
+            service.search_and_download_album(download_id)
+    except Exception as e:
+        print(f"Download error: {e}")
+        # Update download status to failed
+        try:
+            download = db.query(Download).filter(Download.id == download_id).first()
+            if download:
+                download.status = "failed"
+                download.error_message = str(e)
+                db.commit()
+        except:
+            pass
+    finally:
+        db.close()
+
+
+def run_move_download_in_background(download_id: int):
+    """Move completed download to music library in background."""
+    db = SessionLocal()
+    try:
+        service = SlskdService(db)
+        service.move_completed_download(download_id)
+    except Exception as e:
+        print(f"Move download error: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/api/downloads/slskd-status", response_model=SlskdStatusResponse)
+def get_slskd_status(db: Session = Depends(get_db)):
+    """Check if slskd integration is enabled and available."""
+    service = SlskdService(db)
+    return SlskdStatusResponse(
+        enabled=slskd_config.enabled,
+        available=service.is_available(),
+        url=slskd_config.url if slskd_config.enabled else None
+    )
+
+
+@app.get("/api/downloads", response_model=List[DownloadResponse])
+def get_downloads(db: Session = Depends(get_db)):
+    """Get all downloads."""
+    service = SlskdService(db)
+    downloads = service.get_all_downloads()
+    
+    result = []
+    for download in downloads:
+        progress = 0
+        if download.total_bytes > 0:
+            progress = (download.completed_bytes / download.total_bytes) * 100
+        elif download.total_files > 0:
+            progress = (download.completed_files / download.total_files) * 100
+        
+        result.append(DownloadResponse(
+            id=download.id,
+            album_id=download.album_id,
+            artist_name=download.artist_name,
+            album_title=download.album_title,
+            slskd_username=download.slskd_username,
+            total_files=download.total_files,
+            completed_files=download.completed_files,
+            total_bytes=download.total_bytes,
+            completed_bytes=download.completed_bytes,
+            status=download.status,
+            error_message=download.error_message,
+            created_at=download.created_at,
+            started_at=download.started_at,
+            completed_at=download.completed_at,
+            progress_percent=round(progress, 1)
+        ))
+    
+    return result
+
+
+@app.post("/api/downloads/{album_id}", response_model=DownloadResponse)
+def start_download(
+    album_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Start downloading an album from Soulseek via slskd."""
+    if not slskd_config.is_configured():
+        raise HTTPException(status_code=400, detail="slskd integration is not configured")
+    
+    service = SlskdService(db)
+    if not service.is_available():
+        raise HTTPException(status_code=503, detail="slskd is not available")
+    
+    # Check album exists
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    # Check if already downloading this album
+    existing = db.query(Download).filter(
+        Download.album_id == album_id,
+        Download.status.in_(["pending", "searching", "downloading"])
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Album is already being downloaded")
+    
+    # Create pending download record
+    artist_name = album.artist.name if album.artist else "Unknown Artist"
+    download = Download(
+        album_id=album_id,
+        artist_name=artist_name,
+        album_title=album.title,
+        status="pending"
+    )
+    db.add(download)
+    db.commit()
+    db.refresh(download)
+    
+    # Start download in background - pass download_id, not album_id
+    background_tasks.add_task(run_download_in_background, download.id)
+    
+    return DownloadResponse(
+        id=download.id,
+        album_id=download.album_id,
+        artist_name=download.artist_name,
+        album_title=download.album_title,
+        slskd_username=download.slskd_username,
+        total_files=download.total_files,
+        completed_files=download.completed_files,
+        total_bytes=download.total_bytes,
+        completed_bytes=download.completed_bytes,
+        status=download.status,
+        error_message=download.error_message,
+        created_at=download.created_at,
+        started_at=download.started_at,
+        completed_at=download.completed_at,
+        progress_percent=0
+    )
+
+
+@app.get("/api/downloads/{download_id}", response_model=DownloadResponse)
+def get_download(download_id: int, db: Session = Depends(get_db)):
+    """Get a specific download with updated progress."""
+    service = SlskdService(db)
+    download = service.update_download_progress(download_id)
+    
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    progress = 0
+    if download.total_bytes > 0:
+        progress = (download.completed_bytes / download.total_bytes) * 100
+    elif download.total_files > 0:
+        progress = (download.completed_files / download.total_files) * 100
+    
+    return DownloadResponse(
+        id=download.id,
+        album_id=download.album_id,
+        artist_name=download.artist_name,
+        album_title=download.album_title,
+        slskd_username=download.slskd_username,
+        total_files=download.total_files,
+        completed_files=download.completed_files,
+        total_bytes=download.total_bytes,
+        completed_bytes=download.completed_bytes,
+        status=download.status,
+        error_message=download.error_message,
+        created_at=download.created_at,
+        started_at=download.started_at,
+        completed_at=download.completed_at,
+        progress_percent=round(progress, 1)
+    )
+
+
+@app.post("/api/downloads/{download_id}/move")
+def move_download(
+    download_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Move a completed download to the music library."""
+    download = db.query(Download).filter(Download.id == download_id).first()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    if download.status != "completed":
+        raise HTTPException(status_code=400, detail="Download is not completed")
+    
+    background_tasks.add_task(run_move_download_in_background, download_id)
+    
+    return {"message": "Moving download to music library"}
+
+
+@app.post("/api/downloads/{download_id}/cancel", response_model=DownloadResponse)
+def cancel_download(
+    download_id: int,
+    db: Session = Depends(get_db)
+):
+    """Cancel an active download."""
+    service = SlskdService(db)
+    download = service.cancel_download(download_id)
+    
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    progress = 0
+    if download.total_bytes > 0:
+        progress = (download.completed_bytes / download.total_bytes) * 100
+    elif download.total_files > 0:
+        progress = (download.completed_files / download.total_files) * 100
+    
+    return DownloadResponse(
+        id=download.id,
+        album_id=download.album_id,
+        artist_name=download.artist_name,
+        album_title=download.album_title,
+        slskd_username=download.slskd_username,
+        total_files=download.total_files,
+        completed_files=download.completed_files,
+        total_bytes=download.total_bytes,
+        completed_bytes=download.completed_bytes,
+        status=download.status,
+        error_message=download.error_message,
+        created_at=download.created_at,
+        started_at=download.started_at,
+        completed_at=download.completed_at,
+        progress_percent=round(progress, 1)
+    )
+
+
+@app.post("/api/downloads/{download_id}/retry", response_model=DownloadResponse)
+def retry_download(
+    download_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Retry a failed or cancelled download."""
+    download = db.query(Download).filter(Download.id == download_id).first()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    if download.status not in ["failed", "cancelled"]:
+        raise HTTPException(status_code=400, detail="Only failed or cancelled downloads can be retried")
+    
+    # Reset download status
+    download.status = "pending"
+    download.error_message = None
+    download.completed_files = 0
+    download.completed_bytes = 0
+    download.slskd_username = None
+    db.commit()
+    db.refresh(download)
+    
+    # Start retry in background
+    background_tasks.add_task(run_download_in_background, download.id)
+    
+    progress = 0
+    return DownloadResponse(
+        id=download.id,
+        album_id=download.album_id,
+        artist_name=download.artist_name,
+        album_title=download.album_title,
+        slskd_username=download.slskd_username,
+        total_files=download.total_files,
+        completed_files=download.completed_files,
+        total_bytes=download.total_bytes,
+        completed_bytes=download.completed_bytes,
+        status=download.status,
+        error_message=download.error_message,
+        created_at=download.created_at,
+        started_at=download.started_at,
+        completed_at=download.completed_at,
+        progress_percent=progress
+    )
+
+
+@app.delete("/api/downloads/{download_id}")
+def delete_download(download_id: int, db: Session = Depends(get_db)):
+    """Delete a download record."""
+    download = db.query(Download).filter(Download.id == download_id).first()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    db.delete(download)
+    db.commit()
+    
+    return {"message": "Download deleted"}

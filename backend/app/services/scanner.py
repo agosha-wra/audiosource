@@ -463,8 +463,11 @@ class ScannerService:
             album.release_type = mb_info.get("release_type")
             album.track_count = mb_info.get("track_count") or len(updated_tracks)
 
-            # Set cover art URL
-            if album.musicbrainz_id:
+            # Set cover art URL - prefer release group (more reliable) over release
+            release_group_id = mb_info.get("release_group_id")
+            if release_group_id:
+                album.cover_art_url = MusicBrainzService.get_release_group_cover_art_url(release_group_id)
+            elif album.musicbrainz_id:
                 album.cover_art_url = MusicBrainzService.get_cover_art_url(album.musicbrainz_id)
         else:
             album.track_count = len(updated_tracks)

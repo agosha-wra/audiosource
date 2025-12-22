@@ -1948,3 +1948,67 @@ body::before {
   }
 }
 
+/* ============ Download Button in Wishlist ============ */
+
+.download-wishlist-btn {
+  position: absolute;
+  bottom: 70px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  background: rgba(34, 197, 94, 0.95);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all var(--transition);
+  z-index: 5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.wishlist-album-wrapper:hover .download-wishlist-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.download-wishlist-btn:hover:not(:disabled) {
+  background: #16a34a;
+  transform: scale(1.1);
+}
+
+.download-wishlist-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.download-wishlist-btn.downloading {
+  background: rgba(249, 115, 22, 0.9);
+  opacity: 1;
+  cursor: default;
+}
+
+.download-wishlist-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.download-wishlist-btn svg.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* CSS Variables for Downloads Page */
+:root {
+  --accent-primary: var(--accent);
+  --accent-blue: #3b82f6;
+  --accent-yellow: #eab308;
+  --accent-green: #22c55e;
+  --accent-purple: #8b5cf6;
+  --accent-red: #ef4444;
+  --bg-tertiary: var(--bg-elevated);
+}
+

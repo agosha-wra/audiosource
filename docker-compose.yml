@@ -23,10 +23,15 @@ services:
       DATABASE_URL: postgresql://audiosource:audiosource@db:5432/audiosource
       MUSIC_FOLDER: /music
       FANART_TV_API_KEY: ${FANART_TV_API_KEY:-}
+      SLSKD_ENABLED: true
+      SLSKD_URL: http://192.168.1.26:5030
+      SLSKD_API_KEY: 8b8102e8275a9a66
+      SLSKD_DOWNLOAD_DIR: /downloads
     ports:
       - "8080:80"
     volumes:
-      - ${MUSIC_FOLDER:-./music}:/music
+      - /Users/agoeuriot/pers/music:/music
+      - /Users/agoeuriot/.config/slskd/downloads/:/downloads
     depends_on:
       db:
         condition: service_healthy

@@ -7,6 +7,7 @@ import ArtistsView from './components/ArtistsView';
 import ArtistDetailView from './components/ArtistDetailView';
 import WishlistView from './components/WishlistView';
 import NewReleasesView from './components/NewReleasesView';
+import DownloadsView from './components/DownloadsView';
 import AlbumModal from './components/AlbumModal';
 import SearchModal from './components/SearchModal';
 
@@ -31,6 +32,8 @@ function getStateFromURL(): { view: View; artistId: number | null; year?: number
     view = 'wishlist';
   } else if (path === '/new-releases') {
     view = 'new-releases';
+  } else if (path === '/downloads') {
+    view = 'downloads';
   } else {
     view = 'albums';
   }
@@ -64,6 +67,9 @@ function updateURL(view: View, artistId?: number | null, year?: number, week?: n
       path = '/new-releases';
       if (year) params.set('year', year.toString());
       if (week) params.set('week', week.toString());
+      break;
+    case 'downloads':
+      path = '/downloads';
       break;
   }
   
@@ -276,6 +282,10 @@ function App() {
             initialWeek={initialWeek}
             onWeekChange={handleWeekChange}
           />
+        )}
+
+        {currentView === 'downloads' && (
+          <DownloadsView />
         )}
       </main>
 

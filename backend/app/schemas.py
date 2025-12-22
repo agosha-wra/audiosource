@@ -186,3 +186,32 @@ class NewReleasesScrapeStatusResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============ Download Schemas ============
+
+class DownloadResponse(BaseModel):
+    id: int
+    album_id: Optional[int] = None
+    artist_name: str
+    album_title: str
+    slskd_username: Optional[str] = None
+    total_files: int
+    completed_files: int
+    total_bytes: int
+    completed_bytes: int
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    progress_percent: float = 0
+
+    class Config:
+        from_attributes = True
+
+
+class SlskdStatusResponse(BaseModel):
+    enabled: bool
+    available: bool
+    url: Optional[str] = None

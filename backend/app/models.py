@@ -126,3 +126,34 @@ class NewReleasesScrapeStatus(Base):
     next_scrape_at = Column(DateTime, nullable=True)
     albums_found = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+
+
+class Download(Base):
+    """Tracks downloads from slskd."""
+    __tablename__ = "downloads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    album_id = Column(Integer, ForeignKey("albums.id"), nullable=True)
+    
+    # Album info (for display even if album is deleted)
+    artist_name = Column(String(500), nullable=False)
+    album_title = Column(String(500), nullable=False)
+    
+    # slskd info
+    slskd_username = Column(String(255), nullable=True)  # User we're downloading from
+    total_files = Column(Integer, default=0)
+    completed_files = Column(Integer, default=0)
+    total_bytes = Column(Integer, default=0)
+    completed_bytes = Column(Integer, default=0)
+    
+    # Status
+    status = Column(String(50), default="pending")  # pending, searching, downloading, completed, failed, moved
+    error_message = Column(Text, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    
+    # Relationship
+    album = relationship("Album")

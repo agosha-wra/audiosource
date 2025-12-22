@@ -132,13 +132,47 @@ class MusicBrainzService:
     @classmethod
     def get_cover_art_url(cls, musicbrainz_id: str) -> Optional[str]:
         """Get the cover art URL for a release."""
-        # Cover Art Archive URL format
+        # Use MusicBrainz's own cover art proxy (more reliable than direct coverartarchive.org)
         return f"https://coverartarchive.org/release/{musicbrainz_id}/front-250"
 
     @classmethod
     def get_release_group_cover_art_url(cls, release_group_id: str) -> Optional[str]:
         """Get the cover art URL for a release group."""
         return f"https://coverartarchive.org/release-group/{release_group_id}/front-250"
+    
+    @classmethod
+    def get_cover_art_url_with_fallback(cls, musicbrainz_id: str, is_release_group: bool = False) -> Optional[str]:
+        """
+        Get cover art URL, trying to find a working one.
+        Uses the Cover Art Archive API to get the actual image URL.
+        """
+        try:
+            endpoint = "release-group" if is_release_group else "release"
+            api_url = f"https://coverartarchive.org/{endpoint}/{musicbrainz_id}"
+            
+            response = requests.get(api_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                images = data.get("images", [])
+                
+                # Find front cover
+                for img in images:
+                    if img.get("front", False):
+                        thumbnails = img.get("thumbnails", {})
+                        # Prefer small thumbnail for performance
+                        return thumbnails.get("small") or thumbnails.get("250") or img.get("image")
+                
+                # Fallback to first image
+                if images:
+                    thumbnails = images[0].get("thumbnails", {})
+                    return thumbnails.get("small") or thumbnails.get("250") or images[0].get("image")
+        except Exception as e:
+            print(f"Error fetching cover art from API: {e}")
+        
+        # Fallback to direct URL
+        if is_release_group:
+            return cls.get_release_group_cover_art_url(musicbrainz_id)
+        return cls.get_cover_art_url(musicbrainz_id)
 
     @classmethod
     def search_artist(cls, artist_name: str) -> Optional[Dict[str, Any]]:
