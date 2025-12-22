@@ -394,17 +394,30 @@ def add_to_wishlist(request: WishlistAddRequest, db: Session = Depends(get_db)):
         db.refresh(album)
         return album
     
-    # Otherwise, create new album from MusicBrainz data
-    if not request.musicbrainz_id:
-        raise HTTPException(status_code=400, detail="Either album_id or musicbrainz_id is required")
-    
     # Check if album already exists by MusicBrainz ID
-    existing = db.query(Album).filter(Album.musicbrainz_id == request.musicbrainz_id).first()
-    if existing:
-        existing.is_wishlisted = True
-        db.commit()
-        db.refresh(existing)
-        return existing
+    if request.musicbrainz_id:
+        existing = db.query(Album).filter(Album.musicbrainz_id == request.musicbrainz_id).first()
+        if existing:
+            existing.is_wishlisted = True
+            db.commit()
+            db.refresh(existing)
+            return existing
+    
+    # Check if album exists by title + artist name (for AOTY releases without MusicBrainz ID)
+    if request.title and request.artist_name:
+        existing = db.query(Album).join(Artist).filter(
+            func.lower(Album.title) == func.lower(request.title),
+            func.lower(Artist.name) == func.lower(request.artist_name)
+        ).first()
+        if existing:
+            existing.is_wishlisted = True
+            db.commit()
+            db.refresh(existing)
+            return existing
+    
+    # Need at least a title to create a new album
+    if not request.title:
+        raise HTTPException(status_code=400, detail="Either album_id, musicbrainz_id, or title is required")
     
     # Get or create artist
     artist = None
@@ -419,7 +432,7 @@ def add_to_wishlist(request: WishlistAddRequest, db: Session = Depends(get_db)):
             db.commit()
             db.refresh(artist)
     elif request.artist_name:
-        artist = db.query(Artist).filter(Artist.name == request.artist_name).first()
+        artist = db.query(Artist).filter(func.lower(Artist.name) == func.lower(request.artist_name)).first()
         if not artist:
             artist = Artist(name=request.artist_name)
             db.add(artist)
@@ -428,7 +441,7 @@ def add_to_wishlist(request: WishlistAddRequest, db: Session = Depends(get_db)):
     
     # Create new album
     album = Album(
-        title=request.title or "Unknown Album",
+        title=request.title,
         musicbrainz_id=request.musicbrainz_id,
         artist_id=artist.id if artist else None,
         release_date=request.release_date,
