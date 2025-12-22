@@ -7,6 +7,7 @@ export default function NewReleasesView() {
   const [loading, setLoading] = useState(true);
   const [scrapeStatus, setScrapeStatus] = useState<NewReleasesScrapeStatus | null>(null);
   const [isScraping, setIsScraping] = useState(false);
+  const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
 
   const fetchReleases = useCallback(async () => {
     try {
@@ -56,6 +57,10 @@ export default function NewReleasesView() {
     } catch (error) {
       console.error('Error starting scrape:', error);
     }
+  };
+
+  const handleImageError = (id: number) => {
+    setFailedImages(prev => new Set(prev).add(id));
   };
 
   const getScoreColor = (score: number | null) => {
@@ -151,11 +156,13 @@ export default function NewReleasesView() {
               >
                 <div className="new-release-rank">#{index + 1}</div>
                 <div className="new-release-cover">
-                  {release.cover_art_url ? (
+                  {release.cover_art_url && !failedImages.has(release.id) ? (
                     <img 
                       src={release.cover_art_url} 
                       alt={release.album_title}
                       loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onError={() => handleImageError(release.id)}
                     />
                   ) : (
                     <div className="cover-placeholder">
@@ -178,14 +185,14 @@ export default function NewReleasesView() {
                   <div className="new-release-title">{release.album_title}</div>
                   <div className="new-release-artist">{release.artist_name}</div>
                   <div className="new-release-meta">
-                    {release.release_type && (
-                      <span className="release-type">{release.release_type}</span>
-                    )}
-                    {release.release_date && (
-                      <span className="release-date">{release.release_date}</span>
-                    )}
+                    <span className="release-type">{release.release_type || 'LP'}</span>
+                    <span className="meta-separator">•</span>
+                    <span className="release-date">{release.release_date || 'TBA'}</span>
                     {release.num_critics !== null && release.num_critics > 0 && (
-                      <span className="num-critics">{release.num_critics} reviews</span>
+                      <>
+                        <span className="meta-separator">•</span>
+                        <span className="num-critics">{release.num_critics} reviews</span>
+                      </>
                     )}
                   </div>
                 </div>
@@ -204,4 +211,3 @@ export default function NewReleasesView() {
     </>
   );
 }
-

@@ -1674,23 +1674,35 @@ body::before {
 
 .new-release-meta {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 4px;
+  margin-top: 6px;
+  flex-wrap: wrap;
 }
 
 .new-release-meta .release-type {
-  padding: 2px 8px;
-  background: var(--bg-hover);
+  padding: 3px 10px;
+  background: var(--accent-glow);
+  color: var(--accent);
   border-radius: var(--radius-sm);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.new-release-meta .meta-separator {
+  color: var(--border-color);
+}
+
+.new-release-meta .release-date {
+  color: var(--text-secondary);
 }
 
 .new-release-meta .num-critics {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  color: var(--text-muted);
 }
 
 .aoty-link {
