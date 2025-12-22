@@ -679,11 +679,54 @@ body::before {
   text-align: center;
   cursor: pointer;
   transition: all var(--transition);
+  position: relative;
 }
 
 .artist-card:hover {
   border-color: var(--accent);
   transform: translateY(-2px);
+}
+
+.artist-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all var(--transition);
+}
+
+.artist-card:hover .artist-delete-btn {
+  opacity: 1;
+}
+
+.artist-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.artist-delete-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.btn-spinner-small {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .artist-avatar {
@@ -1043,18 +1086,7 @@ body::before {
 
 /* Wishlisted album card style */
 .album-card.wishlisted {
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-.album-card.wishlisted::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #ef4444, #f97316);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 /* Wishlist view */

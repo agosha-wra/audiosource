@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { Artist } from '../types';
-import { getArtists } from '../api';
+import { getArtists, deleteArtist } from '../api';
 
 interface ArtistsViewProps {
   onArtistClick: (artistId: number) => void;
@@ -14,6 +14,7 @@ function getInitials(name: string): string {
 export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     const fetchArtists = async () => {
@@ -29,6 +30,31 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
 
     fetchArtists();
   }, []);
+
+  const handleDelete = async (e: React.MouseEvent, artistId: number) => {
+    e.stopPropagation();
+    
+    if (deleting.has(artistId)) return;
+    
+    setDeleting(prev => new Set(prev).add(artistId));
+    
+    try {
+      await deleteArtist(artistId);
+      setArtists(artists.filter(a => a.id !== artistId));
+    } catch (error) {
+      console.error('Error deleting artist:', error);
+    } finally {
+      setDeleting(prev => {
+        const next = new Set(prev);
+        next.delete(artistId);
+        return next;
+      });
+    }
+  };
+
+  const canDelete = (artist: Artist) => {
+    return (artist.owned_album_count || 0) === 0;
+  };
 
   return (
     <>
@@ -65,6 +91,22 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
                 className="artist-card"
                 onClick={() => onArtistClick(artist.id)}
               >
+                {canDelete(artist) && (
+                  <button
+                    className="artist-delete-btn"
+                    onClick={(e) => handleDelete(e, artist.id)}
+                    disabled={deleting.has(artist.id)}
+                    title="Delete artist"
+                  >
+                    {deleting.has(artist.id) ? (
+                      <div className="btn-spinner-small" />
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                      </svg>
+                    )}
+                  </button>
+                )}
                 {artist.image_url ? (
                   <div className="artist-image">
                     <img 
@@ -114,4 +156,3 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
     </>
   );
 }
-

@@ -287,6 +287,38 @@ def get_artist_albums(
     return albums
 
 
+@app.delete("/api/artists/{artist_id}")
+def delete_artist(artist_id: int, db: Session = Depends(get_db)):
+    """
+    Delete an artist and all their non-owned albums.
+    Cannot delete artists that have owned albums.
+    """
+    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    
+    # Check if artist has owned albums
+    owned_count = db.query(Album).filter(
+        Album.artist_id == artist_id,
+        Album.is_owned == True
+    ).count()
+    
+    if owned_count > 0:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot delete artist with {owned_count} owned album(s)"
+        )
+    
+    # Delete all non-owned albums for this artist
+    db.query(Album).filter(Album.artist_id == artist_id).delete()
+    
+    # Delete the artist
+    db.delete(artist)
+    db.commit()
+    
+    return {"message": "Artist deleted"}
+
+
 @app.post("/api/scan", response_model=ScanStatusResponse)
 def start_scan(
     request: ScanRequest,
@@ -460,13 +492,29 @@ def add_to_wishlist(request: WishlistAddRequest, db: Session = Depends(get_db)):
 
 @app.delete("/api/wishlist/{album_id}")
 def remove_from_wishlist(album_id: int, db: Session = Depends(get_db)):
-    """Remove an album from the wishlist."""
+    """Remove an album from the wishlist. Cleans up orphaned artists."""
     album = db.query(Album).filter(Album.id == album_id).first()
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
     
-    album.is_wishlisted = False
+    artist_id = album.artist_id
+    
+    # If album is not owned, delete it entirely
+    if not album.is_owned:
+        db.delete(album)
+    else:
+        album.is_wishlisted = False
+    
     db.commit()
+    
+    # Clean up orphaned artist (no owned or wishlisted albums)
+    if artist_id:
+        remaining_albums = db.query(Album).filter(Album.artist_id == artist_id).count()
+        if remaining_albums == 0:
+            artist = db.query(Artist).filter(Artist.id == artist_id).first()
+            if artist:
+                db.delete(artist)
+                db.commit()
     
     return {"message": "Removed from wishlist"}
 

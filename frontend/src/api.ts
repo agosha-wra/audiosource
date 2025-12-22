@@ -38,6 +38,10 @@ export async function getArtistAlbums(artistId: number): Promise<Album[]> {
   return fetchApi<Album[]>(`/artists/${artistId}/albums`);
 }
 
+export async function deleteArtist(artistId: number): Promise<void> {
+  await fetchApi(`/artists/${artistId}`, { method: 'DELETE' });
+}
+
 export async function getStats(): Promise<Stats> {
   return fetchApi<Stats>('/stats');
 }
