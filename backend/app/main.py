@@ -662,6 +662,8 @@ def run_aoty_scrape_in_background(year: int = None, week: int = None):
         with _aoty_lock:
             service = AOTYService(db)
             service.scrape_weekly_releases(year, week)
+    except Exception as e:
+        print(f"AOTY scrape error: {e}")
     finally:
         db.close()
 
@@ -684,8 +686,8 @@ def scrape_new_releases(
     if status.status == "scraping":
         return status
     
-    # Mark as pending
-    status.status = "scraping"
+    # Mark as pending (the background task will set it to "scraping")
+    status.status = "pending"
     db.commit()
     db.refresh(status)
     
