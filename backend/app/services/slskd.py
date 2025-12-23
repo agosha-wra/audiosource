@@ -444,18 +444,22 @@ class SlskdService:
                             file_size = file_dl.get("size", 0)
                             total_bytes += file_size
                             
-                            # slskd states can be comma-separated like "Completed, Succeeded"
+                            # slskd states can be comma-separated like "Completed, Succeeded" or "Completed, Errored"
                             state = str(file_dl.get("state", "")).lower()
                             bytes_transferred = file_dl.get("bytesTransferred", 0)
                             
-                            # Check if state contains completed/succeeded
-                            if "completed" in state or "succeeded" in state:
+                            # Check for error states FIRST - "Completed, Errored" should be treated as failed
+                            if "errored" in state or "timedout" in state or "cancelled" in state or "rejected" in state:
+                                failed_files += 1
+                            elif "completed" in state and "succeeded" in state:
+                                # Only count as completed if it says "Completed, Succeeded" (not just "Completed")
                                 completed_files += 1
                                 completed_bytes += file_size
-                            elif "errored" in state or "timedout" in state or "cancelled" in state or "rejected" in state:
-                                failed_files += 1
+                            elif "succeeded" in state:
+                                completed_files += 1
+                                completed_bytes += file_size
                             else:
-                                # InProgress, Queued, Initializing, Requested, etc.
+                                # InProgress, Queued, Initializing, Requested, or just "Completed" without Succeeded
                                 completed_bytes += bytes_transferred
                     
                     # Update counts
