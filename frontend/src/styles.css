@@ -1152,6 +1152,61 @@ body::before {
   height: 18px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.download-all-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.download-all-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669, #047857);
+  transform: translateY(-1px);
+}
+
+.download-all-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.download-all-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.wishlist-download-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.wishlist-download-progress svg {
+  width: 18px;
+  height: 18px;
+}
+
 .wishlist-section {
   margin-bottom: 40px;
 }

@@ -262,11 +262,14 @@ def list_artists(
     limit: int = 100,
     db: Session = Depends(get_db)
 ):
-    """List all artists with album counts."""
-    artists = db.query(Artist).order_by(Artist.name).offset(skip).limit(limit).all()
+    """List all artists with album counts (only artists with owned albums)."""
+    # Only get artists who have at least one owned album
+    artists_with_owned = db.query(Artist).join(Album).filter(
+        Album.is_owned == True
+    ).distinct().order_by(Artist.name).offset(skip).limit(limit).all()
     
     result = []
-    for artist in artists:
+    for artist in artists_with_owned:
         owned_count = db.query(Album).filter(
             Album.artist_id == artist.id,
             Album.is_owned == True
@@ -497,7 +500,8 @@ def get_stats(db: Session = Depends(get_db)):
     owned_album_count = db.query(Album).filter(Album.is_owned == True).count()
     missing_album_count = db.query(Album).filter(Album.is_owned == False).count()
     wishlisted_count = db.query(Album).filter(Album.is_wishlisted == True).count()
-    artist_count = db.query(Artist).count()
+    # Only count artists who have at least one owned album
+    artist_count = db.query(Artist).join(Album).filter(Album.is_owned == True).distinct().count()
 
     return {
         "album_count": owned_album_count,
@@ -914,6 +918,130 @@ def get_downloads(db: Session = Depends(get_db)):
         ))
     
     return result
+
+
+# Track wishlist download queue status
+wishlist_download_status = {
+    "running": False,
+    "queued_count": 0,
+    "processed_count": 0,
+    "current_album": None
+}
+
+
+def run_wishlist_downloads_in_background(album_ids: list):
+    """Background task to download wishlist albums one at a time with rate limiting."""
+    import time
+    global wishlist_download_status
+    
+    wishlist_download_status["running"] = True
+    wishlist_download_status["queued_count"] = len(album_ids)
+    wishlist_download_status["processed_count"] = 0
+    
+    db = SessionLocal()
+    try:
+        for i, album_id in enumerate(album_ids):
+            # Check if album still needs download (not already downloading/downloaded)
+            album = db.query(Album).filter(Album.id == album_id).first()
+            if not album or album.is_owned:
+                wishlist_download_status["processed_count"] += 1
+                continue
+            
+            # Check if there's already a pending/downloading entry for this album
+            existing = db.query(Download).filter(
+                Download.album_id == album_id,
+                Download.status.in_(["pending", "searching", "downloading"])
+            ).first()
+            
+            if existing:
+                wishlist_download_status["processed_count"] += 1
+                continue
+            
+            wishlist_download_status["current_album"] = f"{album.artist.name if album.artist else 'Unknown'} - {album.title}"
+            
+            # Create download entry
+            download = Download(
+                album_id=album_id,
+                artist_name=album.artist.name if album.artist else "Unknown Artist",
+                album_title=album.title,
+                status="pending"
+            )
+            db.add(download)
+            db.commit()
+            db.refresh(download)
+            
+            print(f"slskd: Starting wishlist download {i+1}/{len(album_ids)}: {download.artist_name} - {download.album_title}")
+            
+            # Start the download
+            service = SlskdService(db)
+            service.search_and_download_album(download.id)
+            
+            wishlist_download_status["processed_count"] = i + 1
+            
+            # Wait 90 seconds before starting next download (except for last one)
+            if i < len(album_ids) - 1:
+                print(f"slskd: Waiting 90 seconds before next download...")
+                time.sleep(90)
+        
+        print(f"slskd: Wishlist download queue complete. Processed {len(album_ids)} albums.")
+    except Exception as e:
+        print(f"slskd: Error in wishlist download queue: {e}")
+    finally:
+        wishlist_download_status["running"] = False
+        wishlist_download_status["current_album"] = None
+        db.close()
+
+
+@app.post("/api/downloads/wishlist")
+def download_wishlist(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Start downloading all wishlisted albums with rate limiting (one every 90 seconds)."""
+    global wishlist_download_status
+    
+    if wishlist_download_status["running"]:
+        return {
+            "message": "Wishlist download already in progress",
+            "status": wishlist_download_status
+        }
+    
+    # Get all wishlisted albums that aren't owned and don't have pending downloads
+    wishlisted = db.query(Album).filter(
+        Album.is_wishlisted == True,
+        Album.is_owned == False
+    ).all()
+    
+    # Filter out albums that already have pending/downloading entries
+    album_ids = []
+    for album in wishlisted:
+        existing = db.query(Download).filter(
+            Download.album_id == album.id,
+            Download.status.in_(["pending", "searching", "downloading"])
+        ).first()
+        if not existing:
+            album_ids.append(album.id)
+    
+    if not album_ids:
+        return {
+            "message": "No albums to download",
+            "queued_count": 0
+        }
+    
+    # Start background task
+    background_tasks.add_task(run_wishlist_downloads_in_background, album_ids)
+    
+    return {
+        "message": f"Started downloading {len(album_ids)} albums (one every 90 seconds)",
+        "queued_count": len(album_ids)
+    }
+
+
+@app.get("/api/downloads/wishlist/status")
+def get_wishlist_download_status_endpoint():
+    """Get the status of the wishlist download queue."""
+    global wishlist_download_status
+    return wishlist_download_status
 
 
 @app.post("/api/downloads/{album_id}", response_model=DownloadResponse)

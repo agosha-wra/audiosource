@@ -149,3 +149,19 @@ export async function cancelDownload(downloadId: number): Promise<Download> {
 export async function deleteDownload(downloadId: number): Promise<void> {
   await fetchApi(`/downloads/${downloadId}`, { method: 'DELETE' });
 }
+
+// Wishlist batch download
+export interface WishlistDownloadStatus {
+  running: boolean;
+  queued_count: number;
+  processed_count: number;
+  current_album: string | null;
+}
+
+export async function startWishlistDownload(): Promise<{ message: string; queued_count: number }> {
+  return fetchApi('/downloads/wishlist', { method: 'POST' });
+}
+
+export async function getWishlistDownloadStatus(): Promise<WishlistDownloadStatus> {
+  return fetchApi<WishlistDownloadStatus>('/downloads/wishlist/status');
+}

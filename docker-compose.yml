@@ -24,7 +24,7 @@ services:
       MUSIC_FOLDER: /music
       FANART_TV_API_KEY: ${FANART_TV_API_KEY:-}
       SLSKD_ENABLED: true
-      SLSKD_URL: http://192.168.1.26:5030
+      SLSKD_URL: http://host.docker.internal:5030
       SLSKD_API_KEY: 8b8102e8275a9a66
       SLSKD_DOWNLOAD_DIR: /downloads
     ports:
