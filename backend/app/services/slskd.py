@@ -434,6 +434,7 @@ class SlskdService:
                     total_files = 0
                     completed_files = 0
                     failed_files = 0
+                    failed_file_info = []  # Track info about failed files for retry
                     total_bytes = 0
                     completed_bytes = 0
                     
@@ -443,6 +444,7 @@ class SlskdService:
                             total_files += 1
                             file_size = file_dl.get("size", 0)
                             total_bytes += file_size
+                            filename = file_dl.get("filename", "")
                             
                             # slskd states can be comma-separated like "Completed, Succeeded" or "Completed, Errored"
                             state = str(file_dl.get("state", "")).lower()
@@ -451,6 +453,7 @@ class SlskdService:
                             # Check for error states FIRST - "Completed, Errored" should be treated as failed
                             if "errored" in state or "timedout" in state or "cancelled" in state or "rejected" in state:
                                 failed_files += 1
+                                failed_file_info.append({"filename": filename, "size": file_size})
                             elif "completed" in state and "succeeded" in state:
                                 # Only count as completed if it says "Completed, Succeeded" (not just "Completed")
                                 completed_files += 1
@@ -475,12 +478,33 @@ class SlskdService:
                     # Check if complete or failed
                     if total_files > 0:
                         if completed_files + failed_files >= total_files:
-                            # 100% or nothing - any failed files means the download failed
+                            # All files have reached a terminal state
                             if failed_files > 0:
+                                # Check if we should retry failed files (max 3 retries)
+                                max_retries = 3
+                                current_retries = download.file_retry_count or 0
+                                
+                                if current_retries < max_retries and failed_file_info:
+                                    # Retry the failed files
+                                    print(f"slskd: Download {download.id} - {failed_files} files failed, attempting retry {current_retries + 1}/{max_retries}")
+                                    
+                                    # Re-queue just the failed files
+                                    retry_success = self.client.download_files(download.slskd_username, failed_file_info)
+                                    
+                                    if retry_success:
+                                        download.file_retry_count = current_retries + 1
+                                        download.error_message = f"Retrying {failed_files} failed files (attempt {current_retries + 1}/{max_retries})"
+                                        self.db.commit()
+                                        print(f"slskd: Re-queued {len(failed_file_info)} failed files for download {download.id}")
+                                        return download
+                                    else:
+                                        print(f"slskd: Failed to re-queue files for retry")
+                                
+                                # Either max retries exceeded or retry failed
                                 download.status = "failed"
-                                download.error_message = f"{failed_files} of {total_files} files failed to download"
+                                download.error_message = f"{failed_files} of {total_files} files failed to download (after {current_retries} retries)"
                                 download.completed_at = datetime.utcnow()
-                                print(f"slskd: Download {download.id} failed - {failed_files}/{total_files} files failed")
+                                print(f"slskd: Download {download.id} failed - {failed_files}/{total_files} files failed (retries exhausted)")
                             else:
                                 # All files completed successfully - auto-move to library
                                 download.status = "completed"
@@ -507,11 +531,12 @@ class SlskdService:
         if download.status not in ["failed", "cancelled"]:
             return download
         
-        # Reset status and try again
+        # Reset status and try again (including file retry count)
         download.status = "pending"
         download.error_message = None
         download.completed_files = 0
         download.completed_bytes = 0
+        download.file_retry_count = 0  # Reset file retry count for fresh start
         download.slskd_username = None
         self.db.commit()
         

@@ -200,6 +200,7 @@ class DownloadResponse(BaseModel):
     completed_files: int
     total_bytes: int
     completed_bytes: int
+    file_retry_count: int = 0
     status: str
     error_message: Optional[str] = None
     created_at: datetime

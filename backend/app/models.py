@@ -146,6 +146,9 @@ class Download(Base):
     total_bytes = Column(Integer, default=0)
     completed_bytes = Column(Integer, default=0)
     
+    # Retry tracking for individual failed files
+    file_retry_count = Column(Integer, default=0)  # Number of times we've retried failed files
+    
     # Status
     status = Column(String(50), default="pending")  # pending, searching, downloading, completed, failed, moved
     error_message = Column(Text, nullable=True)

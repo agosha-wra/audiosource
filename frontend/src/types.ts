@@ -132,6 +132,7 @@ export interface Download {
   completed_files: number;
   total_bytes: number;
   completed_bytes: number;
+  file_retry_count: number;
   status: 'pending' | 'searching' | 'downloading' | 'completed' | 'failed' | 'moved' | 'cancelled';
   error_message: string | null;
   created_at: string;
