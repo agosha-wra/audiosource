@@ -715,15 +715,19 @@ def delete_artist(artist_id: int, db: Session = Depends(get_db)):
 @app.post("/api/scan", response_model=ScanStatusResponse)
 def start_scan(
     request: ScanRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """Start a library scan."""
+    import threading
+    
+    logger.info("[API] Scan endpoint called")
+    
     scanner = ScannerService(db)
     status = scanner.get_or_create_scan_status()
 
     # If already scanning, return current status
     if status.status == "scanning":
+        logger.info("[API] Scan already in progress")
         return status
 
     # Mark as pending to indicate scan is queued
@@ -731,8 +735,11 @@ def start_scan(
     db.commit()
     db.refresh(status)
 
-    # Start background scan - the scanner will set status to "scanning"
-    background_tasks.add_task(run_scan_in_background, request.force_rescan)
+    # Start background scan in a new thread
+    logger.info("[API] Starting scan thread...")
+    thread = threading.Thread(target=run_scan_in_background, args=(request.force_rescan,), daemon=True)
+    thread.start()
+    logger.info("[API] Scan thread started")
 
     return status
 
