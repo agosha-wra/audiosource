@@ -40,7 +40,7 @@ export interface Track {
 
 export interface ScanStatus {
   id: number;
-  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error';
+  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error' | 'cancelled';
   current_folder: string | null;
   total_folders: number;
   scanned_folders: number;
