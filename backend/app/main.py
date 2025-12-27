@@ -770,6 +770,24 @@ def reset_scan_status(db: Session = Depends(get_db)):
     return status
 
 
+@app.post("/api/scan/cancel", response_model=ScanStatusResponse)
+def cancel_scan(db: Session = Depends(get_db)):
+    """Cancel a running scan."""
+    logger.info("[API] Cancelling scan")
+    scanner = ScannerService(db)
+    status = scanner.get_or_create_scan_status()
+    
+    if status.status in ["scanning", "pending"]:
+        status.status = "cancelled"
+        status.error_message = "Scan was cancelled by user"
+        status.completed_at = datetime.utcnow()
+        db.commit()
+        db.refresh(status)
+        logger.info("[API] Scan cancelled")
+    
+    return status
+
+
 @app.get("/api/scan/status", response_model=ScanStatusResponse)
 def get_scan_status(db: Session = Depends(get_db)):
     """Get the current scan status."""

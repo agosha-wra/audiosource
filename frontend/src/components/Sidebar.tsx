@@ -9,6 +9,7 @@ interface SidebarProps {
   isCheckingUpcoming: boolean;
   onNavigate: (view: View) => void;
   onScan: () => void;
+  onCancelScan: () => void;
   onCheckUpcoming: () => void;
 }
 
@@ -21,6 +22,7 @@ export default function Sidebar({
   isCheckingUpcoming,
   onNavigate, 
   onScan,
+  onCancelScan,
   onCheckUpcoming
 }: SidebarProps) {
   const progress = scanStatus && scanStatus.total_folders > 0
@@ -128,13 +130,25 @@ export default function Sidebar({
             <div className="scan-progress">
               <div className="scan-progress-bar" style={{ width: `${progress}%` }} />
             </div>
-            <span className="scan-text">
-              {scanStatus?.status === 'scanning'
-                ? `Scanning ${scanStatus.scanned_folders}/${scanStatus.total_folders}...`
-                : scanStatus?.status === 'completed'
-                ? 'Scan completed!'
-                : 'Starting scan...'}
-            </span>
+            <div className="scan-status-row">
+              <span className="scan-text">
+                {scanStatus?.status === 'scanning'
+                  ? `Scanning ${scanStatus.scanned_folders}/${scanStatus.total_folders}...`
+                  : scanStatus?.status === 'completed'
+                  ? 'Scan completed!'
+                  : scanStatus?.status === 'cancelled'
+                  ? 'Scan cancelled'
+                  : 'Starting scan...'}
+              </span>
+              {scanStatus?.status === 'scanning' && (
+                <button className="cancel-scan-btn" onClick={onCancelScan} title="Cancel scan">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         ) : isCheckingUpcoming ? (
           <div className="scan-status">

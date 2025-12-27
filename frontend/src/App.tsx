@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { View, Stats, ScanStatus, UpcomingStatus } from './types';
-import { getStats, getScanStatus, startScan, checkUpcomingReleases, getUpcomingStatus } from './api';
+import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, getUpcomingStatus } from './api';
 import Sidebar from './components/Sidebar';
 import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
@@ -205,6 +205,15 @@ function App() {
     }
   };
 
+  const handleCancelScan = async () => {
+    try {
+      await cancelScan();
+      setIsScanning(false);
+    } catch (error) {
+      console.error('Error cancelling scan:', error);
+    }
+  };
+
   const handleCheckUpcoming = async () => {
     try {
       await checkUpcomingReleases();
@@ -269,6 +278,7 @@ function App() {
         isCheckingUpcoming={isCheckingUpcoming}
         onNavigate={handleNavigate}
         onScan={handleScan}
+        onCancelScan={handleCancelScan}
         onCheckUpcoming={handleCheckUpcoming}
       />
       

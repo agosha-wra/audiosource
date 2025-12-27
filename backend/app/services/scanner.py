@@ -603,6 +603,12 @@ class ScannerService:
             scanned_paths = set()
             errors = []
             for i, folder_path in enumerate(album_folders):
+                # Check if scan was cancelled
+                self.db.refresh(status)
+                if status.status == "cancelled":
+                    logger.info("Scan was cancelled by user, stopping...")
+                    return status
+                
                 status.current_folder = folder_path
                 status.scanned_folders = i + 1
                 

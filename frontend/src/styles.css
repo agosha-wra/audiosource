@@ -225,6 +225,36 @@ body::before {
   color: var(--text-secondary);
 }
 
+.scan-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cancel-scan-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 150ms ease;
+}
+
+.cancel-scan-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ef4444;
+}
+
+.cancel-scan-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 .scan-progress-bar.upcoming {
   background: #22c55e;
 }

@@ -57,6 +57,12 @@ export async function getScanStatus(): Promise<ScanStatus> {
   return fetchApi<ScanStatus>('/scan/status');
 }
 
+export async function cancelScan(): Promise<ScanStatus> {
+  return fetchApi<ScanStatus>('/scan/cancel', {
+    method: 'POST',
+  });
+}
+
 // Wishlist
 export async function getWishlist(): Promise<Album[]> {
   return fetchApi<Album[]>('/wishlist');
