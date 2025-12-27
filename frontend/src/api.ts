@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings } from './types';
 
 const API_BASE = '/api';
 
@@ -164,4 +164,21 @@ export async function startWishlistDownload(): Promise<{ message: string; queued
 
 export async function getWishlistDownloadStatus(): Promise<WishlistDownloadStatus> {
   return fetchApi<WishlistDownloadStatus>('/downloads/wishlist/status');
+}
+
+// Metadata Matching
+export async function getMetadataMatches(albumId: number): Promise<MetadataMatchCandidate[]> {
+  return fetchApi<MetadataMatchCandidate[]>(`/albums/${albumId}/metadata-matches`);
+}
+
+export async function applyMetadata(albumId: number, musicbrainzId: string): Promise<{ success: boolean; message: string }> {
+  return fetchApi(`/albums/${albumId}/apply-metadata`, {
+    method: 'POST',
+    body: JSON.stringify({ musicbrainz_id: musicbrainzId }),
+  });
+}
+
+// Settings
+export async function getAppSettings(): Promise<AppSettings> {
+  return fetchApi<AppSettings>('/settings');
 }

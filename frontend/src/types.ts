@@ -147,4 +147,29 @@ export interface SlskdStatus {
   url: string | null;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads';
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'settings';
+
+// Settings
+export interface AppSettings {
+  music_folder: string;
+  slskd: {
+    enabled: boolean;
+    url: string | null;
+    download_dir: string | null;
+    api_key_set: boolean;
+  };
+  database_url: string;
+}
+
+// Metadata matching
+export interface MetadataMatchCandidate {
+  musicbrainz_id: string;
+  title: string;
+  artist_name: string | null;
+  artist_musicbrainz_id: string | null;
+  release_date: string | null;
+  release_type: string | null;
+  cover_art_url: string | null;
+  track_count: number | null;
+  match_score: number;
+}

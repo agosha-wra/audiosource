@@ -22,7 +22,6 @@ services:
     environment:
       DATABASE_URL: postgresql://audiosource:audiosource@db:5432/audiosource
       MUSIC_FOLDER: /music
-      FANART_TV_API_KEY: ${FANART_TV_API_KEY:-}
       SLSKD_ENABLED: true
       SLSKD_URL: http://host.docker.internal:5030
       SLSKD_API_KEY: 8b8102e8275a9a66

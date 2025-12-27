@@ -955,12 +955,14 @@ body::before {
 
 /* Album Ownership Status in Detail */
 .album-ownership-status {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  margin-bottom: 12px;
+  height: 28px;
+  box-sizing: border-box;
 }
 
 .album-ownership-status.owned {
