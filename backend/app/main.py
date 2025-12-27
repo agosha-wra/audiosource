@@ -57,13 +57,23 @@ _scheduler_running = False
 
 def run_scan_in_background(force_rescan: bool):
     """Run the library scan in a background thread."""
+    import sys
+    print("[SCAN] Starting background scan...", flush=True)
     db = SessionLocal()
     try:
         with _scan_lock:
+            print("[SCAN] Acquired lock, initializing scanner...", flush=True)
             scanner = ScannerService(db)
+            print("[SCAN] Running scan_library...", flush=True)
             scanner.scan_library(force_rescan)
+            print("[SCAN] Scan completed!", flush=True)
+    except Exception as e:
+        import traceback
+        print(f"[SCAN] ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
     finally:
         db.close()
+        print("[SCAN] Database connection closed", flush=True)
 
 
 async def scheduled_scan_loop():

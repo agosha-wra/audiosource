@@ -587,11 +587,11 @@ class ScannerService:
 
         try:
             # Find all album folders
-            print(f"Finding album folders in {settings.music_folder}...")
+            print(f"Finding album folders in {settings.music_folder}...", flush=True)
             album_folders = self.find_album_folders(settings.music_folder)
             status.total_folders = len(album_folders)
             self.db.commit()
-            print(f"Found {len(album_folders)} album folders to scan")
+            print(f"Found {len(album_folders)} album folders to scan", flush=True)
 
             # Scan each folder (this will also organize files)
             scanned_paths = set()
@@ -603,7 +603,7 @@ class ScannerService:
                 # Commit progress every 10 albums to reduce DB load
                 if i % 10 == 0:
                     self.db.commit()
-                    print(f"Progress: {i + 1}/{len(album_folders)} - {folder_path}")
+                    print(f"Progress: {i + 1}/{len(album_folders)} - {folder_path}", flush=True)
 
                 try:
                     album = self.scan_album_folder(folder_path, force_rescan)
@@ -612,8 +612,8 @@ class ScannerService:
                 except Exception as e:
                     import traceback
                     error_msg = f"Error scanning {folder_path}: {e}"
-                    print(error_msg)
-                    print(traceback.format_exc())
+                    print(error_msg, flush=True)
+                    print(traceback.format_exc(), flush=True)
                     errors.append(error_msg)
                     # Rollback any failed transaction and continue
                     try:
@@ -624,11 +624,11 @@ class ScannerService:
             
             # Store any errors for debugging
             if errors:
-                print(f"Completed with {len(errors)} errors")
+                print(f"Completed with {len(errors)} errors", flush=True)
                 status.error_message = f"{len(errors)} albums failed to scan. First error: {errors[0][:200]}"
 
             # Check for albums that no longer exist on disk
-            print("Checking for deleted albums...")
+            print("Checking for deleted albums...", flush=True)
             owned_albums = self.db.query(Album).filter(
                 Album.is_owned == True,
                 Album.folder_path.isnot(None)
@@ -638,7 +638,7 @@ class ScannerService:
             for album in owned_albums:
                 # Check if folder still exists
                 if album.folder_path and not Path(album.folder_path).exists():
-                    print(f"Album folder deleted: {album.title} ({album.folder_path})")
+                    print(f"Album folder deleted: {album.title} ({album.folder_path})", flush=True)
                     album.is_owned = False
                     album.folder_path = None
                     # Delete associated tracks since files are gone
@@ -647,10 +647,10 @@ class ScannerService:
             
             if deleted_count > 0:
                 self.db.commit()
-                print(f"Marked {deleted_count} albums as no longer owned (folders deleted)")
+                print(f"Marked {deleted_count} albums as no longer owned (folders deleted)", flush=True)
 
             # After scanning owned albums, fetch discographies for all artists
-            print("Fetching artist discographies...")
+            print("Fetching artist discographies...", flush=True)
             artists = self.db.query(Artist).filter(
                 Artist.musicbrainz_id.isnot(None)
             ).all()
@@ -658,7 +658,7 @@ class ScannerService:
             for idx, artist in enumerate(artists):
                 try:
                     if idx % 10 == 0:
-                        print(f"Artist discography progress: {idx + 1}/{len(artists)}")
+                        print(f"Artist discography progress: {idx + 1}/{len(artists)}", flush=True)
                     # Reset discography_fetched if force_rescan
                     if force_rescan:
                         artist.discography_fetched = False
@@ -666,8 +666,8 @@ class ScannerService:
                     self.fetch_artist_discography(artist)
                 except Exception as e:
                     import traceback
-                    print(f"Error fetching discography for {artist.name}: {e}")
-                    print(traceback.format_exc())
+                    print(f"Error fetching discography for {artist.name}: {e}", flush=True)
+                    print(traceback.format_exc(), flush=True)
                     try:
                         self.db.rollback()
                     except:
@@ -676,12 +676,12 @@ class ScannerService:
 
             status.status = "completed"
             status.completed_at = datetime.utcnow()
-            print(f"Scan completed! Scanned {status.scanned_folders} folders.")
+            print(f"Scan completed! Scanned {status.scanned_folders} folders.", flush=True)
 
         except Exception as e:
             import traceback
-            print(f"Fatal scan error: {e}")
-            print(traceback.format_exc())
+            print(f"Fatal scan error: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
             status.status = "error"
             status.error_message = str(e)[:500]
             status.completed_at = datetime.utcnow()
