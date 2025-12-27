@@ -725,6 +725,16 @@ def start_scan(
     scanner = ScannerService(db)
     status = scanner.get_or_create_scan_status()
 
+    # Check for stuck scan (scanning for more than 30 minutes with no progress)
+    if status.status == "scanning" and status.started_at:
+        time_since_start = datetime.utcnow() - status.started_at
+        if time_since_start.total_seconds() > 1800:  # 30 minutes
+            logger.warning(f"[API] Detected stuck scan (started {time_since_start} ago), resetting...")
+            status.status = "idle"
+            status.error_message = "Previous scan was stuck and has been reset"
+            db.commit()
+            db.refresh(status)
+
     # If already scanning, return current status
     if status.status == "scanning":
         logger.info("[API] Scan already in progress")
@@ -741,6 +751,22 @@ def start_scan(
     thread.start()
     logger.info("[API] Scan thread started")
 
+    return status
+
+
+@app.post("/api/scan/reset", response_model=ScanStatusResponse)
+def reset_scan_status(db: Session = Depends(get_db)):
+    """Force reset scan status if stuck."""
+    logger.info("[API] Forcing scan status reset")
+    scanner = ScannerService(db)
+    status = scanner.get_or_create_scan_status()
+    
+    status.status = "idle"
+    status.error_message = "Scan was manually reset"
+    status.completed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(status)
+    
     return status
 
 
