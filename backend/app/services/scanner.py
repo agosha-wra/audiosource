@@ -386,32 +386,43 @@ class ScannerService:
 
     def scan_album_folder(self, folder_path: str, force_rescan: bool = False) -> Optional[Album]:
         """Scan a single album folder and create/update database records."""
+        print(f"  [ALBUM] Scanning: {folder_path}", flush=True)
+        
         # Check if album already exists
         existing = self.db.query(Album).filter(Album.folder_path == folder_path).first()
         if existing and existing.is_scanned and not force_rescan:
+            print(f"  [ALBUM] Already scanned, skipping", flush=True)
             return existing
 
         # Extract metadata from files
+        print(f"  [ALBUM] Extracting metadata...", flush=True)
         album_title, artist_name, tracks_info = self.extract_metadata_from_files(folder_path)
+        print(f"  [ALBUM] Found: {artist_name} - {album_title} ({len(tracks_info)} tracks)", flush=True)
 
         # Search MusicBrainz for additional info
         mb_info = None
         if album_title:
+            print(f"  [ALBUM] Searching MusicBrainz...", flush=True)
             mb_release = MusicBrainzService.search_release(album_title, artist_name)
             if mb_release:
                 mb_info = MusicBrainzService.extract_release_info(mb_release)
+                print(f"  [ALBUM] MusicBrainz match found", flush=True)
+            else:
+                print(f"  [ALBUM] No MusicBrainz match", flush=True)
 
         # Use MusicBrainz data for artist/album names if available
         final_artist_name = mb_info.get("artist_name") if mb_info else artist_name
         final_album_title = mb_info.get("title", album_title) if mb_info else album_title
 
         # Organize the folder structure
+        print(f"  [ALBUM] Organizing folder...", flush=True)
         new_folder_path, updated_tracks = self.organize_album_folder(
             folder_path,
             final_artist_name,
             final_album_title,
             tracks_info
         )
+        print(f"  [ALBUM] Folder organized: {new_folder_path}", flush=True)
 
         # Determine artist
         artist = None
@@ -473,12 +484,15 @@ class ScannerService:
             album.track_count = len(updated_tracks)
 
         album.is_scanned = True
+        print(f"  [ALBUM] Committing to database...", flush=True)
         self.db.commit()
         self.db.refresh(album)
 
         # Create tracks with updated paths
+        print(f"  [ALBUM] Creating tracks...", flush=True)
         self._create_tracks(album, updated_tracks)
 
+        print(f"  [ALBUM] Done: {album.title}", flush=True)
         return album
 
     def _create_tracks(self, album: Album, tracks_info: List[dict]):
