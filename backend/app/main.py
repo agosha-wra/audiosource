@@ -55,25 +55,27 @@ _scan_lock = threading.Lock()
 _scheduler_running = False
 
 
+import logging
+logger = logging.getLogger("uvicorn.error")
+
 def run_scan_in_background(force_rescan: bool):
     """Run the library scan in a background thread."""
-    import sys
-    print("[SCAN] Starting background scan...", flush=True)
+    logger.info("[SCAN] Starting background scan...")
     db = SessionLocal()
     try:
         with _scan_lock:
-            print("[SCAN] Acquired lock, initializing scanner...", flush=True)
+            logger.info("[SCAN] Acquired lock, initializing scanner...")
             scanner = ScannerService(db)
-            print("[SCAN] Running scan_library...", flush=True)
+            logger.info("[SCAN] Running scan_library...")
             scanner.scan_library(force_rescan)
-            print("[SCAN] Scan completed!", flush=True)
+            logger.info("[SCAN] Scan completed!")
     except Exception as e:
         import traceback
-        print(f"[SCAN] ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
+        logger.error(f"[SCAN] ERROR: {e}")
+        logger.error(traceback.format_exc())
     finally:
         db.close()
-        print("[SCAN] Database connection closed", flush=True)
+        logger.info("[SCAN] Database connection closed")
 
 
 async def scheduled_scan_loop():
