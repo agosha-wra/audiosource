@@ -510,6 +510,23 @@ body::before {
   border: 3px solid var(--border-color);
   border-top-color: var(--accent);
   border-radius: 50%;
+}
+
+.load-more-trigger {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-more {
+  padding: 20px;
+}
+
+.loading-more .loading-spinner {
+  width: 24px;
+  height: 24px;
+  border-width: 2px;
   animation: spin 1s linear infinite;
 }
 
