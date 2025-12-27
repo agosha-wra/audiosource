@@ -587,24 +587,45 @@ class ScannerService:
 
         try:
             # Find all album folders
+            print(f"Finding album folders in {settings.music_folder}...")
             album_folders = self.find_album_folders(settings.music_folder)
             status.total_folders = len(album_folders)
             self.db.commit()
+            print(f"Found {len(album_folders)} album folders to scan")
 
             # Scan each folder (this will also organize files)
             scanned_paths = set()
+            errors = []
             for i, folder_path in enumerate(album_folders):
                 status.current_folder = folder_path
                 status.scanned_folders = i + 1
-                self.db.commit()
+                
+                # Commit progress every 10 albums to reduce DB load
+                if i % 10 == 0:
+                    self.db.commit()
+                    print(f"Progress: {i + 1}/{len(album_folders)} - {folder_path}")
 
                 try:
                     album = self.scan_album_folder(folder_path, force_rescan)
                     if album and album.folder_path:
                         scanned_paths.add(album.folder_path)
                 except Exception as e:
-                    print(f"Error scanning {folder_path}: {e}")
+                    import traceback
+                    error_msg = f"Error scanning {folder_path}: {e}"
+                    print(error_msg)
+                    print(traceback.format_exc())
+                    errors.append(error_msg)
+                    # Rollback any failed transaction and continue
+                    try:
+                        self.db.rollback()
+                    except:
+                        pass
                     continue
+            
+            # Store any errors for debugging
+            if errors:
+                print(f"Completed with {len(errors)} errors")
+                status.error_message = f"{len(errors)} albums failed to scan. First error: {errors[0][:200]}"
 
             # Check for albums that no longer exist on disk
             print("Checking for deleted albums...")
@@ -634,23 +655,35 @@ class ScannerService:
                 Artist.musicbrainz_id.isnot(None)
             ).all()
             
-            for artist in artists:
+            for idx, artist in enumerate(artists):
                 try:
+                    if idx % 10 == 0:
+                        print(f"Artist discography progress: {idx + 1}/{len(artists)}")
                     # Reset discography_fetched if force_rescan
                     if force_rescan:
                         artist.discography_fetched = False
                         self.db.commit()
                     self.fetch_artist_discography(artist)
                 except Exception as e:
+                    import traceback
                     print(f"Error fetching discography for {artist.name}: {e}")
+                    print(traceback.format_exc())
+                    try:
+                        self.db.rollback()
+                    except:
+                        pass
                     continue
 
             status.status = "completed"
             status.completed_at = datetime.utcnow()
+            print(f"Scan completed! Scanned {status.scanned_folders} folders.")
 
         except Exception as e:
+            import traceback
+            print(f"Fatal scan error: {e}")
+            print(traceback.format_exc())
             status.status = "error"
-            status.error_message = str(e)
+            status.error_message = str(e)[:500]
             status.completed_at = datetime.utcnow()
 
         self.db.commit()

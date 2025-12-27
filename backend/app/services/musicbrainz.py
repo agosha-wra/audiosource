@@ -35,34 +35,43 @@ class MusicBrainzService:
         cls,
         album_title: str,
         artist_name: Optional[str] = None,
-        limit: int = 5
+        limit: int = 5,
+        retries: int = 3
     ) -> Optional[Dict[str, Any]]:
         """
         Search for a release (album) in MusicBrainz.
         Returns the best matching release or None.
         """
-        cls._rate_limit()
+        for attempt in range(retries):
+            cls._rate_limit()
 
-        try:
-            query = f'release:"{album_title}"'
-            if artist_name:
-                query += f' AND artist:"{artist_name}"'
+            try:
+                query = f'release:"{album_title}"'
+                if artist_name:
+                    query += f' AND artist:"{artist_name}"'
 
-            result = musicbrainzngs.search_releases(
-                query=query,
-                limit=limit
-            )
+                result = musicbrainzngs.search_releases(
+                    query=query,
+                    limit=limit
+                )
 
-            releases = result.get("release-list", [])
-            if not releases:
+                releases = result.get("release-list", [])
+                if not releases:
+                    return None
+
+                # Return the first (best) match
+                return releases[0]
+
+            except musicbrainzngs.WebServiceError as e:
+                print(f"MusicBrainz WebService error (attempt {attempt + 1}/{retries}): {e}")
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))  # Exponential backoff
+                continue
+            except Exception as e:
+                print(f"MusicBrainz search error: {e}")
                 return None
-
-            # Return the first (best) match
-            return releases[0]
-
-        except Exception as e:
-            print(f"MusicBrainz search error: {e}")
-            return None
+        
+        return None
 
     @classmethod
     def search_releases_multi(
