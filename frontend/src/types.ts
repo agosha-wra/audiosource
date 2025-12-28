@@ -40,7 +40,7 @@ export interface Track {
 
 export interface ScanStatus {
   id: number;
-  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error' | 'cancelled';
+  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error';
   current_folder: string | null;
   total_folders: number;
   scanned_folders: number;
@@ -132,7 +132,6 @@ export interface Download {
   completed_files: number;
   total_bytes: number;
   completed_bytes: number;
-  file_retry_count: number;
   status: 'pending' | 'searching' | 'downloading' | 'completed' | 'failed' | 'moved' | 'cancelled';
   error_message: string | null;
   created_at: string;
@@ -147,29 +146,4 @@ export interface SlskdStatus {
   url: string | null;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'settings';
-
-// Settings
-export interface AppSettings {
-  music_folder: string;
-  slskd: {
-    enabled: boolean;
-    url: string | null;
-    download_dir: string | null;
-    api_key_set: boolean;
-  };
-  database_url: string;
-}
-
-// Metadata matching
-export interface MetadataMatchCandidate {
-  musicbrainz_id: string;
-  title: string;
-  artist_name: string | null;
-  artist_musicbrainz_id: string | null;
-  release_date: string | null;
-  release_type: string | null;
-  cover_art_url: string | null;
-  track_count: number | null;
-  match_score: number;
-}
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads';

@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus } from './types';
 
 const API_BASE = '/api';
 
@@ -17,12 +17,9 @@ async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise
   return response.json();
 }
 
-export async function getAlbums(search = '', skip = 0, limit = 100): Promise<Album[]> {
-  const params = new URLSearchParams();
-  if (search) params.set('search', search);
-  params.set('skip', skip.toString());
-  params.set('limit', limit.toString());
-  return fetchApi<Album[]>(`/albums?${params.toString()}`);
+export async function getAlbums(search = ''): Promise<Album[]> {
+  const params = search ? `?search=${encodeURIComponent(search)}` : '';
+  return fetchApi<Album[]>(`/albums${params}`);
 }
 
 export async function getAlbum(id: number): Promise<Album> {
@@ -58,12 +55,6 @@ export async function startScan(forceRescan = false): Promise<ScanStatus> {
 
 export async function getScanStatus(): Promise<ScanStatus> {
   return fetchApi<ScanStatus>('/scan/status');
-}
-
-export async function cancelScan(): Promise<ScanStatus> {
-  return fetchApi<ScanStatus>('/scan/cancel', {
-    method: 'POST',
-  });
 }
 
 // Wishlist
@@ -157,37 +148,4 @@ export async function cancelDownload(downloadId: number): Promise<Download> {
 
 export async function deleteDownload(downloadId: number): Promise<void> {
   await fetchApi(`/downloads/${downloadId}`, { method: 'DELETE' });
-}
-
-// Wishlist batch download
-export interface WishlistDownloadStatus {
-  running: boolean;
-  queued_count: number;
-  processed_count: number;
-  current_album: string | null;
-}
-
-export async function startWishlistDownload(): Promise<{ message: string; queued_count: number }> {
-  return fetchApi('/downloads/wishlist', { method: 'POST' });
-}
-
-export async function getWishlistDownloadStatus(): Promise<WishlistDownloadStatus> {
-  return fetchApi<WishlistDownloadStatus>('/downloads/wishlist/status');
-}
-
-// Metadata Matching
-export async function getMetadataMatches(albumId: number): Promise<MetadataMatchCandidate[]> {
-  return fetchApi<MetadataMatchCandidate[]>(`/albums/${albumId}/metadata-matches`);
-}
-
-export async function applyMetadata(albumId: number, musicbrainzId: string): Promise<{ success: boolean; message: string }> {
-  return fetchApi(`/albums/${albumId}/apply-metadata`, {
-    method: 'POST',
-    body: JSON.stringify({ musicbrainz_id: musicbrainzId }),
-  });
-}
-
-// Settings
-export async function getAppSettings(): Promise<AppSettings> {
-  return fetchApi<AppSettings>('/settings');
 }

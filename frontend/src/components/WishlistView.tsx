@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Album, SlskdStatus } from '../types';
-import { getWishlist, removeFromWishlist, getSlskdStatus, startDownload, startWishlistDownload, getWishlistDownloadStatus, type WishlistDownloadStatus } from '../api';
+import { getWishlist, removeFromWishlist, getSlskdStatus, startDownload } from '../api';
 import AlbumCard from './AlbumCard';
 
 interface WishlistViewProps {
@@ -13,17 +13,6 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
   const [loading, setLoading] = useState(true);
   const [slskdStatus, setSlskdStatus] = useState<SlskdStatus | null>(null);
   const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
-  const [wishlistStatus, setWishlistStatus] = useState<WishlistDownloadStatus | null>(null);
-  const [startingWishlist, setStartingWishlist] = useState(false);
-
-  const fetchWishlistStatus = useCallback(async () => {
-    try {
-      const status = await getWishlistDownloadStatus();
-      setWishlistStatus(status);
-    } catch (error) {
-      console.error('Error fetching wishlist status:', error);
-    }
-  }, []);
 
   const fetchSlskdStatus = useCallback(async () => {
     try {
@@ -48,31 +37,7 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
   useEffect(() => {
     fetchWishlist();
     fetchSlskdStatus();
-    fetchWishlistStatus();
-  }, [fetchSlskdStatus, fetchWishlistStatus]);
-
-  // Poll wishlist download status when running
-  useEffect(() => {
-    if (!wishlistStatus?.running) return;
-
-    const interval = setInterval(() => {
-      fetchWishlistStatus();
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [wishlistStatus?.running, fetchWishlistStatus]);
-
-  const handleStartWishlistDownload = async () => {
-    setStartingWishlist(true);
-    try {
-      await startWishlistDownload();
-      fetchWishlistStatus();
-    } catch (error) {
-      console.error('Error starting wishlist download:', error);
-    } finally {
-      setStartingWishlist(false);
-    }
-  };
+  }, [fetchSlskdStatus]);
 
   const handleRemove = async (e: React.MouseEvent, albumId: number) => {
     e.stopPropagation();
@@ -119,39 +84,13 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
     <>
       <header className="header">
         <h1>Wishlist</h1>
-        <div className="header-actions">
-          {canDownload && albums.length > 0 && (
-            wishlistStatus?.running ? (
-              <div className="wishlist-download-progress">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                </svg>
-                <span>Downloading {wishlistStatus.processed_count}/{wishlistStatus.queued_count}</span>
-              </div>
-            ) : (
-              <button 
-                className="download-all-btn" 
-                onClick={handleStartWishlistDownload}
-                disabled={startingWishlist}
-                title="Download all wishlist albums (one every 90 seconds)"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                <span>{startingWishlist ? 'Starting...' : 'Download All'}</span>
-              </button>
-            )
-          )}
-          <button className="search-albums-btn" onClick={onOpenSearch}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/>
-              <path d="M21 21l-4.35-4.35"/>
-            </svg>
-            <span>Search Albums</span>
-          </button>
-        </div>
+        <button className="search-albums-btn" onClick={onOpenSearch}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <span>Search Albums</span>
+        </button>
       </header>
       
       <div className="content">

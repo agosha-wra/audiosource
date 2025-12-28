@@ -217,12 +217,6 @@ export default function DownloadsView() {
                     {getStatusLabel(download.status)}
                   </span>
                   
-                  {download.file_retry_count > 0 && download.status === 'downloading' && (
-                    <span className="download-retry-badge">
-                      Retrying files ({download.file_retry_count}/3)
-                    </span>
-                  )}
-                  
                   {download.slskd_username && (
                     <span className="download-source">from {download.slskd_username}</span>
                   )}
@@ -433,15 +427,6 @@ export default function DownloadsView() {
 
         .download-status {
           font-weight: 500;
-        }
-
-        .download-retry-badge {
-          background: var(--accent-yellow);
-          color: #000;
-          padding: 2px 8px;
-          border-radius: 10px;
-          font-size: 11px;
-          font-weight: 600;
         }
 
         .download-progress {

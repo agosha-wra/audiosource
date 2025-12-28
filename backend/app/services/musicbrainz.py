@@ -35,43 +35,34 @@ class MusicBrainzService:
         cls,
         album_title: str,
         artist_name: Optional[str] = None,
-        limit: int = 5,
-        retries: int = 3
+        limit: int = 5
     ) -> Optional[Dict[str, Any]]:
         """
         Search for a release (album) in MusicBrainz.
         Returns the best matching release or None.
         """
-        for attempt in range(retries):
-            cls._rate_limit()
+        cls._rate_limit()
 
-            try:
-                query = f'release:"{album_title}"'
-                if artist_name:
-                    query += f' AND artist:"{artist_name}"'
+        try:
+            query = f'release:"{album_title}"'
+            if artist_name:
+                query += f' AND artist:"{artist_name}"'
 
-                result = musicbrainzngs.search_releases(
-                    query=query,
-                    limit=limit
-                )
+            result = musicbrainzngs.search_releases(
+                query=query,
+                limit=limit
+            )
 
-                releases = result.get("release-list", [])
-                if not releases:
-                    return None
-
-                # Return the first (best) match
-                return releases[0]
-
-            except musicbrainzngs.WebServiceError as e:
-                print(f"MusicBrainz WebService error (attempt {attempt + 1}/{retries}): {e}")
-                if attempt < retries - 1:
-                    time.sleep(2 * (attempt + 1))  # Exponential backoff
-                continue
-            except Exception as e:
-                print(f"MusicBrainz search error: {e}")
+            releases = result.get("release-list", [])
+            if not releases:
                 return None
-        
-        return None
+
+            # Return the first (best) match
+            return releases[0]
+
+        except Exception as e:
+            print(f"MusicBrainz search error: {e}")
+            return None
 
     @classmethod
     def search_releases_multi(
@@ -81,80 +72,47 @@ class MusicBrainzService:
     ) -> List[Dict[str, Any]]:
         """
         Search for releases in MusicBrainz and return multiple results.
-        Used for the search feature. Tries multiple search strategies for robustness.
+        Used for the search feature.
         """
-        results = []
-        seen_ids = set()
-        
-        # Try multiple search strategies
-        search_attempts = [
-            query,  # Original query
-            query.replace('"', ''),  # Without quotes
-        ]
-        
-        # If query looks like "Artist Album", also try structured search
-        parts = query.split()
-        if len(parts) >= 2:
-            # Try just the last few words (likely the album title)
-            search_attempts.append(' '.join(parts[-3:]) if len(parts) > 3 else ' '.join(parts[-2:]))
-        
-        for attempt_query in search_attempts:
-            if len(results) >= limit:
-                break
-                
-            cls._rate_limit()
+        cls._rate_limit()
+
+        try:
+            result = musicbrainzngs.search_release_groups(
+                query=query,
+                limit=limit
+            )
+
+            release_groups = result.get("release-group-list", [])
+            results = []
             
-            try:
-                print(f"MusicBrainz search: trying '{attempt_query}'")
-                result = musicbrainzngs.search_release_groups(
-                    query=attempt_query,
-                    limit=limit
-                )
-
-                release_groups = result.get("release-group-list", [])
-                print(f"MusicBrainz search: found {len(release_groups)} results")
+            for rg in release_groups:
+                # Extract artist info
+                artist_credit = rg.get("artist-credit", [])
+                artist_name = None
+                artist_mbid = None
+                if artist_credit:
+                    first_artist = artist_credit[0]
+                    if isinstance(first_artist, dict):
+                        artist = first_artist.get("artist", first_artist)
+                        artist_name = artist.get("name")
+                        artist_mbid = artist.get("id")
                 
-                for rg in release_groups:
-                    rg_id = rg.get("id")
-                    if not rg_id or rg_id in seen_ids:
-                        continue
-                    seen_ids.add(rg_id)
-                    
-                    # Extract artist info
-                    artist_credit = rg.get("artist-credit", [])
-                    artist_name = None
-                    artist_mbid = None
-                    if artist_credit:
-                        first_artist = artist_credit[0]
-                        if isinstance(first_artist, dict):
-                            artist = first_artist.get("artist", first_artist)
-                            artist_name = artist.get("name")
-                            artist_mbid = artist.get("id")
-                    
-                    results.append({
-                        "musicbrainz_id": rg_id,
-                        "title": rg.get("title"),
-                        "artist_name": artist_name,
-                        "artist_musicbrainz_id": artist_mbid,
-                        "release_date": rg.get("first-release-date", ""),
-                        "release_type": rg.get("primary-type", "Album"),
-                        "cover_art_url": cls.get_release_group_cover_art_url(rg_id) if rg_id else None,
-                    })
-                
-                # If we got good results, stop trying
-                if len(release_groups) >= 3:
-                    break
+                rg_id = rg.get("id")
+                results.append({
+                    "musicbrainz_id": rg_id,
+                    "title": rg.get("title"),
+                    "artist_name": artist_name,
+                    "artist_musicbrainz_id": artist_mbid,
+                    "release_date": rg.get("first-release-date", ""),
+                    "release_type": rg.get("primary-type", "Album"),
+                    "cover_art_url": cls.get_release_group_cover_art_url(rg_id) if rg_id else None,
+                })
+            
+            return results
 
-            except musicbrainzngs.WebServiceError as e:
-                print(f"MusicBrainz WebService error: {e}")
-                # Wait a bit and continue with next attempt
-                time.sleep(2)
-                continue
-            except Exception as e:
-                print(f"MusicBrainz search error: {e}")
-                continue
-        
-        return results[:limit]
+        except Exception as e:
+            print(f"MusicBrainz search error: {e}")
+            return []
 
     @classmethod
     def get_release_details(cls, musicbrainz_id: str) -> Optional[Dict[str, Any]]:
@@ -358,9 +316,31 @@ class MusicBrainzService:
     @classmethod
     def get_artist_image_url(cls, musicbrainz_id: str) -> Optional[str]:
         """
-        Get artist image URL from Wikidata/Wikipedia via MusicBrainz relations.
+        Get artist image URL. Tries multiple sources:
+        1. Fanart.tv (if API key is set)
+        2. Wikidata/Wikipedia via MusicBrainz relations
         """
-        # Try to get image from Wikidata via MusicBrainz
+        import os
+        
+        # Try Fanart.tv first if API key is available
+        api_key = os.environ.get("FANART_TV_API_KEY", "")
+        if api_key:
+            try:
+                url = f"https://webservice.fanart.tv/v3/music/{musicbrainz_id}?api_key={api_key}"
+                response = requests.get(url, timeout=5)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    thumbs = data.get("artistthumb", [])
+                    if thumbs:
+                        return thumbs[0].get("url")
+                    backgrounds = data.get("artistbackground", [])
+                    if backgrounds:
+                        return backgrounds[0].get("url")
+            except Exception as e:
+                print(f"Error fetching from Fanart.tv: {e}")
+        
+        # Fallback: Try to get image from Wikidata via MusicBrainz
         try:
             # Get artist info with URL relations
             cls._rate_limit()

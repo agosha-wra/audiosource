@@ -55,27 +55,15 @@ _scan_lock = threading.Lock()
 _scheduler_running = False
 
 
-import logging
-logger = logging.getLogger("uvicorn.error")
-
 def run_scan_in_background(force_rescan: bool):
     """Run the library scan in a background thread."""
-    logger.info("[SCAN] Starting background scan...")
     db = SessionLocal()
     try:
         with _scan_lock:
-            logger.info("[SCAN] Acquired lock, initializing scanner...")
             scanner = ScannerService(db)
-            logger.info("[SCAN] Running scan_library...")
             scanner.scan_library(force_rescan)
-            logger.info("[SCAN] Scan completed!")
-    except Exception as e:
-        import traceback
-        logger.error(f"[SCAN] ERROR: {e}")
-        logger.error(traceback.format_exc())
     finally:
         db.close()
-        logger.info("[SCAN] Database connection closed")
 
 
 async def scheduled_scan_loop():
@@ -124,7 +112,7 @@ async def scheduled_scan_loop():
                 
                 # Check for timed out downloads (every minute)
                 service = SlskdService(db)
-                timed_out = service.check_and_timeout_downloads()
+                timed_out = service.check_and_timeout_downloads(timeout_minutes=5)
                 if timed_out > 0:
                     print(f"Timed out {timed_out} stuck downloads")
             finally:
@@ -202,280 +190,6 @@ def get_album(album_id: int, db: Session = Depends(get_db)):
     return album
 
 
-@app.get("/api/albums/{album_id}/metadata-matches")
-def get_metadata_matches(album_id: int, db: Session = Depends(get_db)):
-    """
-    Search MusicBrainz for metadata matches for an album.
-    Returns candidates with match scores.
-    """
-    from difflib import SequenceMatcher
-    from app.schemas import MetadataMatchCandidate
-    
-    album = db.query(Album).filter(Album.id == album_id).first()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-    
-    artist_name = album.artist.name if album.artist else ""
-    
-    # Build search query
-    search_query = f"{artist_name} {album.title}".strip()
-    if not search_query:
-        return []
-    
-    # Search MusicBrainz
-    results = MusicBrainzService.search_releases_multi(search_query, limit=10)
-    
-    candidates = []
-    for result in results:
-        # Calculate match score based on title and artist similarity
-        title_score = SequenceMatcher(
-            None, 
-            album.title.lower(), 
-            (result.get("title") or "").lower()
-        ).ratio()
-        
-        result_artist = result.get("artist_name") or ""
-        artist_score = SequenceMatcher(
-            None,
-            artist_name.lower(),
-            result_artist.lower()
-        ).ratio() if artist_name else 0.5
-        
-        # Weighted score: title matters more
-        match_score = int((title_score * 0.6 + artist_score * 0.4) * 100)
-        
-        candidates.append(MetadataMatchCandidate(
-            musicbrainz_id=result.get("musicbrainz_id"),
-            title=result.get("title"),
-            artist_name=result.get("artist_name"),
-            artist_musicbrainz_id=result.get("artist_musicbrainz_id"),
-            release_date=result.get("release_date"),
-            release_type=result.get("release_type"),
-            cover_art_url=result.get("cover_art_url"),
-            track_count=result.get("track_count"),
-            match_score=match_score
-        ))
-    
-    # Sort by match score descending
-    candidates.sort(key=lambda x: x.match_score, reverse=True)
-    
-    return candidates
-
-
-@app.post("/api/albums/{album_id}/apply-metadata")
-def apply_metadata(
-    album_id: int,
-    request: dict,
-    db: Session = Depends(get_db)
-):
-    """
-    Apply metadata from a selected MusicBrainz release to an album.
-    """
-    album = db.query(Album).filter(Album.id == album_id).first()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-    
-    musicbrainz_id = request.get("musicbrainz_id")
-    if not musicbrainz_id:
-        raise HTTPException(status_code=400, detail="musicbrainz_id required")
-    
-    # Fetch full release details from MusicBrainz
-    # First, get release group details since we're using release group IDs
-    try:
-        MusicBrainzService._rate_limit()
-        import musicbrainzngs
-        result = musicbrainzngs.get_release_group_by_id(
-            musicbrainz_id,
-            includes=["artists", "releases"]
-        )
-        release_group = result.get("release-group", {})
-        
-        if not release_group:
-            raise HTTPException(status_code=404, detail="Release not found on MusicBrainz")
-        
-        # Extract info from release group
-        new_title = release_group.get("title")
-        new_release_type = release_group.get("primary-type", "Album")
-        new_release_date = release_group.get("first-release-date", "")
-        
-        # Get artist info
-        artist_credit = release_group.get("artist-credit", [])
-        new_artist_name = None
-        new_artist_mbid = None
-        if artist_credit:
-            first_artist = artist_credit[0]
-            if isinstance(first_artist, dict):
-                artist = first_artist.get("artist", first_artist)
-                new_artist_name = artist.get("name")
-                new_artist_mbid = artist.get("id")
-        
-        # Get track info from first release
-        new_track_count = None
-        mb_tracks = []  # List of (disc_number, track_number, title)
-        releases = release_group.get("release-list", [])
-        release_id = None
-        
-        if releases:
-            first_release = releases[0]
-            release_id = first_release.get("id")
-            medium_list = first_release.get("medium-list", [])
-            new_track_count = sum(
-                int(m.get("track-count", 0)) for m in medium_list
-            ) or None
-        
-        # Fetch detailed track list from the release
-        if release_id:
-            MusicBrainzService._rate_limit()
-            try:
-                release_details = musicbrainzngs.get_release_by_id(
-                    release_id,
-                    includes=["recordings"]
-                )
-                release_data = release_details.get("release", {})
-                medium_list = release_data.get("medium-list", [])
-                
-                for medium in medium_list:
-                    disc_num = int(medium.get("position", 1))
-                    track_list = medium.get("track-list", [])
-                    for track in track_list:
-                        track_num = int(track.get("position", 0))
-                        recording = track.get("recording", {})
-                        track_title = recording.get("title", track.get("title", ""))
-                        if track_title and track_num > 0:
-                            mb_tracks.append((disc_num, track_num, track_title))
-                
-                print(f"Found {len(mb_tracks)} tracks from MusicBrainz release {release_id}")
-            except Exception as track_error:
-                print(f"Error fetching track details: {track_error}")
-        
-        # Update album
-        if new_title:
-            album.title = new_title
-        album.musicbrainz_id = musicbrainz_id
-        album.release_type = new_release_type
-        if new_release_date:
-            album.release_date = new_release_date
-        if new_track_count:
-            album.track_count = new_track_count
-        
-        # Update cover art
-        album.cover_art_url = MusicBrainzService.get_release_group_cover_art_url(musicbrainz_id)
-        
-        # Update or create artist
-        if new_artist_name:
-            if album.artist:
-                # Update existing artist if it doesn't have a MusicBrainz ID
-                if not album.artist.musicbrainz_id and new_artist_mbid:
-                    album.artist.musicbrainz_id = new_artist_mbid
-                    album.artist.name = new_artist_name
-            else:
-                # Check if artist already exists
-                existing_artist = db.query(Artist).filter(
-                    Artist.musicbrainz_id == new_artist_mbid
-                ).first() if new_artist_mbid else None
-                
-                if not existing_artist:
-                    existing_artist = db.query(Artist).filter(
-                        Artist.name == new_artist_name
-                    ).first()
-                
-                if existing_artist:
-                    album.artist = existing_artist
-                else:
-                    new_artist = Artist(
-                        name=new_artist_name,
-                        musicbrainz_id=new_artist_mbid
-                    )
-                    db.add(new_artist)
-                    db.flush()
-                    album.artist = new_artist
-        
-        # Update track metadata
-        tracks_updated = 0
-        if mb_tracks and album.tracks:
-            from difflib import SequenceMatcher
-            
-            # Create lookup dict: (disc_number, track_number) -> title
-            mb_track_lookup = {(disc, num): title for disc, num, title in mb_tracks}
-            
-            # Check if most tracks are missing track numbers
-            tracks_without_numbers = [t for t in album.tracks if not t.track_number]
-            use_title_matching = len(tracks_without_numbers) > len(album.tracks) / 2
-            
-            if use_title_matching:
-                # Match by title similarity and assign track numbers
-                print("Tracks missing numbers, using title matching...")
-                used_mb_tracks = set()
-                
-                for track in album.tracks:
-                    best_match = None
-                    best_score = 0.5  # Minimum threshold
-                    
-                    for disc, num, mb_title in mb_tracks:
-                        if (disc, num) in used_mb_tracks:
-                            continue
-                        
-                        # Compare titles (case insensitive)
-                        score = SequenceMatcher(
-                            None,
-                            track.title.lower(),
-                            mb_title.lower()
-                        ).ratio()
-                        
-                        if score > best_score:
-                            best_score = score
-                            best_match = (disc, num, mb_title)
-                    
-                    if best_match:
-                        disc, num, mb_title = best_match
-                        used_mb_tracks.add((disc, num))
-                        track.title = mb_title
-                        track.track_number = num
-                        track.disc_number = disc
-                        tracks_updated += 1
-                        print(f"  Matched '{track.title}' -> #{num} '{mb_title}' (score: {best_score:.2f})")
-            else:
-                # Match by track number (original behavior)
-                for track in album.tracks:
-                    disc_num = track.disc_number or 1
-                    track_num = track.track_number
-                    
-                    if track_num:
-                        # Try exact match first
-                        key = (disc_num, track_num)
-                        if key in mb_track_lookup:
-                            track.title = mb_track_lookup[key]
-                            tracks_updated += 1
-                        # If single disc album, try with disc 1
-                        elif disc_num == 1 and (1, track_num) in mb_track_lookup:
-                            track.title = mb_track_lookup[(1, track_num)]
-                            tracks_updated += 1
-            
-            print(f"Updated {tracks_updated} track titles")
-        
-        db.commit()
-        db.refresh(album)
-        
-        return {
-            "success": True,
-            "message": f"Applied metadata from MusicBrainz: {new_title}" + (f" ({tracks_updated} tracks updated)" if tracks_updated else ""),
-            "album": {
-                "id": album.id,
-                "title": album.title,
-                "artist_name": album.artist.name if album.artist else None,
-                "release_date": album.release_date,
-                "release_type": album.release_type,
-                "cover_art_url": album.cover_art_url,
-                "track_count": album.track_count
-            },
-            "tracks_updated": tracks_updated
-        }
-        
-    except Exception as e:
-        print(f"Error applying metadata: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to apply metadata: {str(e)}")
-
-
 @app.post("/api/albums/refresh-covers")
 def refresh_album_covers(
     force: bool = False,
@@ -548,14 +262,11 @@ def list_artists(
     limit: int = 100,
     db: Session = Depends(get_db)
 ):
-    """List all artists with album counts (only artists with owned albums)."""
-    # Only get artists who have at least one owned album
-    artists_with_owned = db.query(Artist).join(Album).filter(
-        Album.is_owned == True
-    ).distinct().order_by(Artist.name).offset(skip).limit(limit).all()
+    """List all artists with album counts."""
+    artists = db.query(Artist).order_by(Artist.name).offset(skip).limit(limit).all()
     
     result = []
-    for artist in artists_with_owned:
+    for artist in artists:
         owned_count = db.query(Album).filter(
             Album.artist_id == artist.id,
             Album.is_owned == True
@@ -715,29 +426,15 @@ def delete_artist(artist_id: int, db: Session = Depends(get_db)):
 @app.post("/api/scan", response_model=ScanStatusResponse)
 def start_scan(
     request: ScanRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """Start a library scan."""
-    import threading
-    
-    logger.info("[API] Scan endpoint called")
-    
     scanner = ScannerService(db)
     status = scanner.get_or_create_scan_status()
 
-    # Check for stuck scan (scanning for more than 30 minutes with no progress)
-    if status.status == "scanning" and status.started_at:
-        time_since_start = datetime.utcnow() - status.started_at
-        if time_since_start.total_seconds() > 1800:  # 30 minutes
-            logger.warning(f"[API] Detected stuck scan (started {time_since_start} ago), resetting...")
-            status.status = "idle"
-            status.error_message = "Previous scan was stuck and has been reset"
-            db.commit()
-            db.refresh(status)
-
     # If already scanning, return current status
     if status.status == "scanning":
-        logger.info("[API] Scan already in progress")
         return status
 
     # Mark as pending to indicate scan is queued
@@ -745,46 +442,9 @@ def start_scan(
     db.commit()
     db.refresh(status)
 
-    # Start background scan in a new thread
-    logger.info("[API] Starting scan thread...")
-    thread = threading.Thread(target=run_scan_in_background, args=(request.force_rescan,), daemon=True)
-    thread.start()
-    logger.info("[API] Scan thread started")
+    # Start background scan - the scanner will set status to "scanning"
+    background_tasks.add_task(run_scan_in_background, request.force_rescan)
 
-    return status
-
-
-@app.post("/api/scan/reset", response_model=ScanStatusResponse)
-def reset_scan_status(db: Session = Depends(get_db)):
-    """Force reset scan status if stuck."""
-    logger.info("[API] Forcing scan status reset")
-    scanner = ScannerService(db)
-    status = scanner.get_or_create_scan_status()
-    
-    status.status = "idle"
-    status.error_message = "Scan was manually reset"
-    status.completed_at = datetime.utcnow()
-    db.commit()
-    db.refresh(status)
-    
-    return status
-
-
-@app.post("/api/scan/cancel", response_model=ScanStatusResponse)
-def cancel_scan(db: Session = Depends(get_db)):
-    """Cancel a running scan."""
-    logger.info("[API] Cancelling scan")
-    scanner = ScannerService(db)
-    status = scanner.get_or_create_scan_status()
-    
-    if status.status in ["scanning", "pending"]:
-        status.status = "cancelled"
-        status.error_message = "Scan was cancelled by user"
-        status.completed_at = datetime.utcnow()
-        db.commit()
-        db.refresh(status)
-        logger.info("[API] Scan cancelled")
-    
     return status
 
 
@@ -837,34 +497,13 @@ def get_stats(db: Session = Depends(get_db)):
     owned_album_count = db.query(Album).filter(Album.is_owned == True).count()
     missing_album_count = db.query(Album).filter(Album.is_owned == False).count()
     wishlisted_count = db.query(Album).filter(Album.is_wishlisted == True).count()
-    # Only count artists who have at least one owned album
-    artist_count = db.query(Artist).join(Album).filter(Album.is_owned == True).distinct().count()
+    artist_count = db.query(Artist).count()
 
     return {
         "album_count": owned_album_count,
         "missing_album_count": missing_album_count,
         "wishlist_count": wishlisted_count,
         "artist_count": artist_count,
-    }
-
-
-# ============ Settings Endpoints ============
-
-@app.get("/api/settings")
-def get_settings_info():
-    """Get current application settings (read-only display of environment config)."""
-    import os
-    from app.services.slskd import slskd_config
-    
-    return {
-        "music_folder": os.environ.get("MUSIC_FOLDER", "/music"),
-        "slskd": {
-            "enabled": slskd_config.enabled,
-            "url": slskd_config.url if slskd_config.enabled else None,
-            "download_dir": slskd_config.download_dir if slskd_config.enabled else None,
-            "api_key_set": bool(slskd_config.api_key),
-        },
-        "database_url": os.environ.get("DATABASE_URL", "").split("@")[-1] if "@" in os.environ.get("DATABASE_URL", "") else "configured",  # Hide credentials
     }
 
 
@@ -1275,130 +914,6 @@ def get_downloads(db: Session = Depends(get_db)):
         ))
     
     return result
-
-
-# Track wishlist download queue status
-wishlist_download_status = {
-    "running": False,
-    "queued_count": 0,
-    "processed_count": 0,
-    "current_album": None
-}
-
-
-def run_wishlist_downloads_in_background(album_ids: list):
-    """Background task to download wishlist albums one at a time with rate limiting."""
-    import time
-    global wishlist_download_status
-    
-    wishlist_download_status["running"] = True
-    wishlist_download_status["queued_count"] = len(album_ids)
-    wishlist_download_status["processed_count"] = 0
-    
-    db = SessionLocal()
-    try:
-        for i, album_id in enumerate(album_ids):
-            # Check if album still needs download (not already downloading/downloaded)
-            album = db.query(Album).filter(Album.id == album_id).first()
-            if not album or album.is_owned:
-                wishlist_download_status["processed_count"] += 1
-                continue
-            
-            # Check if there's already a pending/downloading entry for this album
-            existing = db.query(Download).filter(
-                Download.album_id == album_id,
-                Download.status.in_(["pending", "searching", "downloading"])
-            ).first()
-            
-            if existing:
-                wishlist_download_status["processed_count"] += 1
-                continue
-            
-            wishlist_download_status["current_album"] = f"{album.artist.name if album.artist else 'Unknown'} - {album.title}"
-            
-            # Create download entry
-            download = Download(
-                album_id=album_id,
-                artist_name=album.artist.name if album.artist else "Unknown Artist",
-                album_title=album.title,
-                status="pending"
-            )
-            db.add(download)
-            db.commit()
-            db.refresh(download)
-            
-            print(f"slskd: Starting wishlist download {i+1}/{len(album_ids)}: {download.artist_name} - {download.album_title}")
-            
-            # Start the download
-            service = SlskdService(db)
-            service.search_and_download_album(download.id)
-            
-            wishlist_download_status["processed_count"] = i + 1
-            
-            # Wait 90 seconds before starting next download (except for last one)
-            if i < len(album_ids) - 1:
-                print(f"slskd: Waiting 90 seconds before next download...")
-                time.sleep(90)
-        
-        print(f"slskd: Wishlist download queue complete. Processed {len(album_ids)} albums.")
-    except Exception as e:
-        print(f"slskd: Error in wishlist download queue: {e}")
-    finally:
-        wishlist_download_status["running"] = False
-        wishlist_download_status["current_album"] = None
-        db.close()
-
-
-@app.post("/api/downloads/wishlist")
-def download_wishlist(
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """Start downloading all wishlisted albums with rate limiting (one every 90 seconds)."""
-    global wishlist_download_status
-    
-    if wishlist_download_status["running"]:
-        return {
-            "message": "Wishlist download already in progress",
-            "status": wishlist_download_status
-        }
-    
-    # Get all wishlisted albums that aren't owned and don't have pending downloads
-    wishlisted = db.query(Album).filter(
-        Album.is_wishlisted == True,
-        Album.is_owned == False
-    ).all()
-    
-    # Filter out albums that already have pending/downloading entries
-    album_ids = []
-    for album in wishlisted:
-        existing = db.query(Download).filter(
-            Download.album_id == album.id,
-            Download.status.in_(["pending", "searching", "downloading"])
-        ).first()
-        if not existing:
-            album_ids.append(album.id)
-    
-    if not album_ids:
-        return {
-            "message": "No albums to download",
-            "queued_count": 0
-        }
-    
-    # Start background task
-    background_tasks.add_task(run_wishlist_downloads_in_background, album_ids)
-    
-    return {
-        "message": f"Started downloading {len(album_ids)} albums (one every 90 seconds)",
-        "queued_count": len(album_ids)
-    }
-
-
-@app.get("/api/downloads/wishlist/status")
-def get_wishlist_download_status_endpoint():
-    """Get the status of the wishlist download queue."""
-    global wishlist_download_status
-    return wishlist_download_status
 
 
 @app.post("/api/downloads/{album_id}", response_model=DownloadResponse)

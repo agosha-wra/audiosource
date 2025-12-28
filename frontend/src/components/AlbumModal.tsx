@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { Album, Track } from '../types';
 import { getAlbum } from '../api';
-import MetadataMatchModal from './MetadataMatchModal';
 
 interface AlbumModalProps {
   albumId: number;
@@ -26,27 +25,21 @@ function formatTrackDuration(seconds: number): string {
 export default function AlbumModal({ albumId, onClose }: AlbumModalProps) {
   const [album, setAlbum] = useState<Album | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showMetadataMatch, setShowMetadataMatch] = useState(false);
-
-  const fetchAlbum = async () => {
-    try {
-      const data = await getAlbum(albumId);
-      setAlbum(data);
-    } catch (error) {
-      console.error('Error fetching album:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
+    const fetchAlbum = async () => {
+      try {
+        const data = await getAlbum(albumId);
+        setAlbum(data);
+      } catch (error) {
+        console.error('Error fetching album:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchAlbum();
   }, [albumId]);
-
-  const handleMetadataApplied = () => {
-    // Refresh the album data after metadata is applied
-    fetchAlbum();
-  };
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -98,24 +91,8 @@ export default function AlbumModal({ albumId, onClose }: AlbumModalProps) {
             </div>
             
             <div className="album-detail-info">
-              <div className="album-header-row">
-                <div className={`album-ownership-status ${album.is_owned ? 'owned' : 'missing'}`}>
-                  {album.is_owned ? '✓ In Your Library' : '✗ Not In Library'}
-                </div>
-                
-                {album.is_owned && (
-                  <button 
-                    className="fix-metadata-btn"
-                    onClick={() => setShowMetadataMatch(true)}
-                    title="Fix album metadata from MusicBrainz"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                    </svg>
-                    Fix Metadata
-                  </button>
-                )}
+              <div className={`album-ownership-status ${album.is_owned ? 'owned' : 'missing'}`}>
+                {album.is_owned ? '✓ In Your Library' : '✗ Not In Library'}
               </div>
               
               <h2>{album.title}</h2>
@@ -182,53 +159,6 @@ export default function AlbumModal({ albumId, onClose }: AlbumModalProps) {
           </div>
         )}
       </div>
-
-      {showMetadataMatch && album && (
-        <MetadataMatchModal
-          albumId={album.id}
-          albumTitle={album.title}
-          artistName={album.artist?.name || 'Unknown Artist'}
-          onClose={() => setShowMetadataMatch(false)}
-          onApplied={handleMetadataApplied}
-        />
-      )}
-
-      <style>{`
-        .album-header-row {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 8px;
-          flex-wrap: wrap;
-        }
-
-        .fix-metadata-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 12px;
-          border: none;
-          border-radius: 6px;
-          background: var(--bg-tertiary);
-          color: var(--text-secondary);
-          font-size: 12px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.15s ease;
-          height: 28px;
-          box-sizing: border-box;
-        }
-
-        .fix-metadata-btn:hover {
-          background: var(--bg-hover);
-          color: var(--text-primary);
-        }
-
-        .fix-metadata-btn svg {
-          width: 14px;
-          height: 14px;
-        }
-      `}</style>
     </div>
   );
 }

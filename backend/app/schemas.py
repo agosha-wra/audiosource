@@ -200,7 +200,6 @@ class DownloadResponse(BaseModel):
     completed_files: int
     total_bytes: int
     completed_bytes: int
-    file_retry_count: int = 0
     status: str
     error_message: Optional[str] = None
     created_at: datetime
@@ -216,24 +215,3 @@ class SlskdStatusResponse(BaseModel):
     enabled: bool
     available: bool
     url: Optional[str] = None
-
-
-# ============ Metadata Matching Schemas ============
-
-class MetadataMatchCandidate(BaseModel):
-    """A potential MusicBrainz match for an album."""
-    musicbrainz_id: str
-    title: str
-    artist_name: Optional[str] = None
-    artist_musicbrainz_id: Optional[str] = None
-    release_date: Optional[str] = None
-    release_type: Optional[str] = None
-    cover_art_url: Optional[str] = None
-    track_count: Optional[int] = None
-    match_score: int  # 0-100 percentage
-
-
-class ApplyMetadataRequest(BaseModel):
-    """Request to apply metadata from a MusicBrainz release."""
-    musicbrainz_id: str
-    update_files: bool = False  # Whether to update actual file tags

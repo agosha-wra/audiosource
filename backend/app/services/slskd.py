@@ -268,30 +268,26 @@ class SlskdService:
                     username = response.get("username", "")
                     files = response.get("files", [])
                     
-                    # Find matching audio files grouped by folder
-                    matching_folders = self._find_matching_folders(
+                    # Find matching audio files
+                    matching_files = self._find_matching_files(
                         files, artist_name, album_title
                     )
                     
-                    # Create a candidate for each folder (not all files mixed together)
-                    for folder_files in matching_folders:
-                        if len(folder_files) >= 3:  # At least 3 tracks to be a valid album
-                            score = self._calculate_score(
-                                folder_files, artist_name, album_title, expected_tracks
-                            )
-                            
-                            if score > 0:
-                                folder_path = self._get_folder_from_path(folder_files[0].get("filename", ""))
-                                all_candidates.append({
-                                    "username": username,
-                                    "files": folder_files,
-                                    "score": score,
-                                    "track_count": len(folder_files),
-                                    "folder": folder_path
-                                })
+                    if matching_files:
+                        score = self._calculate_score(
+                            matching_files, artist_name, album_title, expected_tracks
+                        )
+                        
+                        if score > 0:
+                            all_candidates.append({
+                                "username": username,
+                                "files": matching_files,
+                                "score": score,
+                                "track_count": len(matching_files)
+                            })
                 
                 # If we have good candidates, stop searching
-                if len(all_candidates) >= 5:
+                if len(all_candidates) >= 3:
                     break
             
             if not all_candidates:
@@ -300,21 +296,10 @@ class SlskdService:
                 self.db.commit()
                 return download
             
-            # Sort by score (highest first)
+            # Sort by score and try to download from best candidate
             all_candidates.sort(key=lambda x: x["score"], reverse=True)
             
-            # Deduplicate: keep only the best folder per user
-            seen_users = set()
-            unique_candidates = []
-            for candidate in all_candidates:
-                if candidate["username"] not in seen_users:
-                    seen_users.add(candidate["username"])
-                    unique_candidates.append(candidate)
-                    print(f"slskd: Candidate - {candidate['username']}: {candidate['track_count']} tracks, score={candidate['score']}, folder={candidate.get('folder', 'unknown')}")
-            
-            # Try to download from best candidate (only one folder)
-            for candidate in unique_candidates[:3]:
-                print(f"slskd: Attempting download from {candidate['username']} - {candidate['track_count']} files from folder: {candidate.get('folder', 'unknown')}")
+            for candidate in all_candidates[:3]:
                 if self.client.download_files(candidate["username"], candidate["files"]):
                     download.status = "downloading"
                     download.slskd_username = candidate["username"]
@@ -322,7 +307,6 @@ class SlskdService:
                     download.total_bytes = sum(f.get("size", 0) for f in candidate["files"])
                     download.started_at = datetime.utcnow()
                     self.db.commit()
-                    print(f"slskd: Download started from {candidate['username']} - {len(candidate['files'])} files")
                     return download
             
             download.status = "failed"
@@ -337,52 +321,35 @@ class SlskdService:
             print(f"slskd: Error searching/downloading: {e}")
             return download
     
-    def _get_folder_from_path(self, filepath: str) -> str:
-        """Extract the parent folder path from a file path."""
-        # slskd paths use backslashes typically
-        if '\\' in filepath:
-            parts = filepath.rsplit('\\', 1)
-            return parts[0] if len(parts) > 1 else ''
-        elif '/' in filepath:
-            parts = filepath.rsplit('/', 1)
-            return parts[0] if len(parts) > 1 else ''
-        return ''
-    
-    def _find_matching_folders(
+    def _find_matching_files(
         self,
         files: List[Dict],
         artist_name: str,
         album_title: str
-    ) -> List[List[Dict]]:
-        """
-        Find audio files that match the artist/album, grouped by folder.
-        Returns a list of file lists, each representing one folder.
-        """
-        from collections import defaultdict
-        
-        folders: Dict[str, List[Dict]] = defaultdict(list)
+    ) -> List[Dict]:
+        """Find audio files that match the artist/album."""
+        matching = []
         
         artist_words = [w.lower() for w in artist_name.split() if len(w) > 2]
         title_words = [w.lower() for w in album_title.split() if len(w) > 2]
         
         for file_info in files:
             filename = file_info.get("filename", "").lower()
+            size = file_info.get("size", 0)
             
-            # Check if it's an audio file (only MP3 and FLAC)
-            if any(ext in filename for ext in [".mp3", ".flac"]):
+            # Check if it's an audio file (prefer MP3, exclude FLAC for size)
+            if any(ext in filename for ext in [".mp3", ".m4a", ".ogg"]):
                 artist_match = any(w in filename for w in artist_words)
                 title_match = any(w in filename for w in title_words)
                 
                 if artist_match or title_match:
-                    folder = self._get_folder_from_path(file_info.get("filename", ""))
-                    folders[folder].append({
+                    matching.append({
                         **file_info,
                         "artist_match": artist_match,
                         "title_match": title_match
                     })
         
-        # Return list of file lists (one per folder)
-        return list(folders.values())
+        return matching
     
     def _calculate_score(
         self,
@@ -391,10 +358,7 @@ class SlskdService:
         album_title: str,
         expected_tracks: int
     ) -> int:
-        """
-        Calculate a quality score for a set of files (one folder).
-        Preference: MP3 320kbps > FLAC > other MP3
-        """
+        """Calculate a quality score for a set of files."""
         if not files:
             return 0
         
@@ -424,40 +388,17 @@ class SlskdService:
         score += both_matches * 5
         score += artist_only * 3
         
-        # Determine format of this folder
-        mp3_count = sum(1 for f in files if ".mp3" in f.get("filename", "").lower())
-        flac_count = sum(1 for f in files if ".flac" in f.get("filename", "").lower())
+        # File format bonus
+        mp3_files = sum(1 for f in files if ".mp3" in f.get("filename", "").lower())
+        if mp3_files > num_tracks * 0.8:
+            score += 10
         
-        is_mp3_folder = mp3_count > flac_count
-        is_flac_folder = flac_count > mp3_count
-        
-        # Check for MP3 320kbps (typical size: 7-15MB per track for 4-5 min songs)
-        # 320kbps = 40KB/s = 2.4MB/min, so 4-min song ≈ 10MB
-        is_mp3_320 = False
-        if is_mp3_folder and mp3_count >= 3:
-            avg_size = sum(f.get("size", 0) for f in files if ".mp3" in f.get("filename", "").lower()) / mp3_count
-            # MP3 320 typically 7-15MB, lower bitrate <7MB
-            if avg_size >= 7_000_000:
-                is_mp3_320 = True
-        
-        # Format preference scoring: MP3 320 > FLAC > other MP3
-        if is_mp3_320:
-            score += 30  # Highest preference for MP3 320
-            print(f"slskd: Folder detected as MP3 320kbps (+30 score)")
-        elif is_flac_folder:
-            score += 25  # Second preference for FLAC
-            print(f"slskd: Folder detected as FLAC (+25 score)")
-        elif is_mp3_folder:
-            score += 10  # Lower bitrate MP3
-            print(f"slskd: Folder detected as MP3 (lower bitrate) (+10 score)")
-        
-        # Reasonable file sizes based on format
-        if is_flac_folder:
-            good_sizes = sum(1 for f in files if 15_000_000 <= f.get("size", 0) <= 80_000_000)
-        else:
-            good_sizes = sum(1 for f in files if 3_000_000 <= f.get("size", 0) <= 20_000_000)
-        
-        if good_sizes >= num_tracks * 0.8:
+        # Reasonable file sizes (6-15MB for MP3 320)
+        good_sizes = sum(
+            1 for f in files
+            if 6_000_000 <= f.get("size", 0) <= 15_000_000
+        )
+        if good_sizes == num_tracks:
             score += 8
         
         # Penalty for too few tracks
@@ -493,7 +434,6 @@ class SlskdService:
                     total_files = 0
                     completed_files = 0
                     failed_files = 0
-                    failed_file_info = []  # Track info about failed files for retry
                     total_bytes = 0
                     completed_bytes = 0
                     
@@ -503,25 +443,19 @@ class SlskdService:
                             total_files += 1
                             file_size = file_dl.get("size", 0)
                             total_bytes += file_size
-                            filename = file_dl.get("filename", "")
                             
-                            # slskd states can be comma-separated like "Completed, Succeeded" or "Completed, Errored"
+                            # slskd states can be comma-separated like "Completed, Succeeded"
                             state = str(file_dl.get("state", "")).lower()
                             bytes_transferred = file_dl.get("bytesTransferred", 0)
                             
-                            # Check for error states FIRST - "Completed, Errored" should be treated as failed
-                            if "errored" in state or "timedout" in state or "cancelled" in state or "rejected" in state:
+                            # Check if state contains completed/succeeded
+                            if "completed" in state or "succeeded" in state:
+                                completed_files += 1
+                                completed_bytes += file_size
+                            elif "errored" in state or "timedout" in state or "cancelled" in state or "rejected" in state:
                                 failed_files += 1
-                                failed_file_info.append({"filename": filename, "size": file_size})
-                            elif "completed" in state and "succeeded" in state:
-                                # Only count as completed if it says "Completed, Succeeded" (not just "Completed")
-                                completed_files += 1
-                                completed_bytes += file_size
-                            elif "succeeded" in state:
-                                completed_files += 1
-                                completed_bytes += file_size
                             else:
-                                # InProgress, Queued, Initializing, Requested, or just "Completed" without Succeeded
+                                # InProgress, Queued, Initializing, Requested, etc.
                                 completed_bytes += bytes_transferred
                     
                     # Update counts
@@ -537,39 +471,32 @@ class SlskdService:
                     # Check if complete or failed
                     if total_files > 0:
                         if completed_files + failed_files >= total_files:
-                            # All files have reached a terminal state
-                            if failed_files > 0:
-                                # Check if we should retry failed files (max 3 retries)
-                                max_retries = 3
-                                current_retries = download.file_retry_count or 0
-                                
-                                if current_retries < max_retries and failed_file_info:
-                                    # Retry the failed files
-                                    print(f"slskd: Download {download.id} - {failed_files} files failed, attempting retry {current_retries + 1}/{max_retries}")
-                                    
-                                    # Re-queue just the failed files
-                                    retry_success = self.client.download_files(download.slskd_username, failed_file_info)
-                                    
-                                    if retry_success:
-                                        download.file_retry_count = current_retries + 1
-                                        download.error_message = f"Retrying {failed_files} failed files (attempt {current_retries + 1}/{max_retries})"
-                                        self.db.commit()
-                                        print(f"slskd: Re-queued {len(failed_file_info)} failed files for download {download.id}")
-                                        return download
-                                    else:
-                                        print(f"slskd: Failed to re-queue files for retry")
-                                
-                                # Either max retries exceeded or retry failed
+                            # Calculate success rate
+                            success_rate = completed_files / total_files if total_files > 0 else 0
+                            
+                            if completed_files == 0:
+                                # All files failed
                                 download.status = "failed"
-                                download.error_message = f"{failed_files} of {total_files} files failed to download (after {current_retries} retries)"
+                                download.error_message = f"All {failed_files} files failed to download"
                                 download.completed_at = datetime.utcnow()
-                                print(f"slskd: Download {download.id} failed - {failed_files}/{total_files} files failed (retries exhausted)")
+                            elif success_rate < 0.5:
+                                # Less than 50% success - mark as failed
+                                download.status = "failed"
+                                download.error_message = f"Only {completed_files} of {total_files} files downloaded ({int(success_rate*100)}%)"
+                                download.completed_at = datetime.utcnow()
+                            elif failed_files > 0:
+                                # Majority succeeded but some failed - completed with warning, NO auto-move
+                                download.status = "completed"
+                                download.error_message = f"{failed_files} of {total_files} files failed"
+                                download.completed_at = datetime.utcnow()
+                                print(f"slskd: Download {download.id} completed with {failed_files} failures - NOT auto-moving")
                             else:
-                                # All files completed successfully - auto-move to library
+                                # All complete - automatically move to library
                                 download.status = "completed"
                                 download.completed_at = datetime.utcnow()
-                                print(f"slskd: Download {download.id} completed successfully (all {total_files} files)! Auto-moving to library...")
+                                print(f"slskd: Download {download.id} completed successfully! Auto-moving to library...")
                                 self.db.commit()
+                                # Auto-move to library
                                 self.move_completed_download(download.id)
                                 return download
                     
@@ -590,12 +517,11 @@ class SlskdService:
         if download.status not in ["failed", "cancelled"]:
             return download
         
-        # Reset status and try again (including file retry count)
+        # Reset status and try again
         download.status = "pending"
         download.error_message = None
         download.completed_files = 0
         download.completed_bytes = 0
-        download.file_retry_count = 0  # Reset file retry count for fresh start
         download.slskd_username = None
         self.db.commit()
         
@@ -630,66 +556,49 @@ class SlskdService:
         
         return download
     
-    def check_and_timeout_downloads(self) -> int:
-        """Check for downloads that have no progress after 1 minute and mark them as failed."""
+    def check_and_timeout_downloads(self, timeout_minutes: int = 5) -> int:
+        """Check for downloads that have been running too long and cancel them."""
         from datetime import timedelta
         
-        one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
+        timeout_threshold = datetime.utcnow() - timedelta(minutes=timeout_minutes)
         
-        # Find downloads that have been active for at least 1 minute
-        active_downloads = self.db.query(Download).filter(
-            Download.status.in_(["pending", "searching", "downloading"]),
-            Download.created_at < one_minute_ago
+        # Find downloads that are stuck (only pending/searching, not downloading)
+        # Downloading status means slskd is actively working on it
+        stuck_downloads = self.db.query(Download).filter(
+            Download.status.in_(["pending", "searching"]),
+            Download.created_at < timeout_threshold
         ).all()
         
-        failed_count = 0
-        for download in active_downloads:
-            # Update progress first to get latest state
+        cancelled_count = 0
+        for download in stuck_downloads:
+            # Double-check by updating progress first
             self.update_download_progress(download.id)
             self.db.refresh(download)
             
-            # Skip if download is no longer active (completed, failed, etc.)
-            if download.status not in ["pending", "searching", "downloading"]:
-                continue
-            
-            # Fail if still stuck in pending/searching after 1 minute
+            # Only timeout if still stuck (not completed/downloading)
             if download.status in ["pending", "searching"]:
-                print(f"slskd: Failing download {download.id} ({download.album_title}) - stuck in {download.status}")
+                print(f"slskd: Timing out download {download.id} ({download.album_title})")
                 download.status = "failed"
-                download.error_message = f"Failed to start download (stuck in {download.status})"
-                failed_count += 1
-            # Fail if downloading but has 0 bytes after 1 minute
-            elif download.status == "downloading" and download.completed_bytes == 0:
-                # Check if started_at is more than 1 minute ago
-                if download.started_at and download.started_at < one_minute_ago:
-                    print(f"slskd: Failing download {download.id} ({download.album_title}) - 0 bytes after 1 minute")
-                    download.status = "failed"
-                    download.error_message = "No data received after 1 minute"
-                    failed_count += 1
+                download.error_message = f"Timed out after {timeout_minutes} minutes (stuck in {download.status})"
+                cancelled_count += 1
         
-        if failed_count > 0:
+        if cancelled_count > 0:
             self.db.commit()
         
-        return failed_count
+        return cancelled_count
     
     def move_completed_download(self, download_id: int) -> bool:
-        """Move completed download to music library. Requires 100% of files."""
+        """Move completed download to music library."""
         download = self.db.query(Download).filter(Download.id == download_id).first()
-        if not download:
+        if not download or download.status != "completed":
             return False
         
-        # Only allow moving completed downloads
-        if download.status != "completed":
-            print(f"slskd: Not moving download {download_id} - status is '{download.status}', not 'completed'")
-            return False
-        
-        # Require 100% of files - no partial albums allowed
-        if download.total_files > 0 and download.completed_files < download.total_files:
-            print(f"slskd: Refusing to move download {download_id} - only {download.completed_files}/{download.total_files} files completed")
-            download.error_message = f"Cannot move: only {download.completed_files}/{download.total_files} files downloaded"
-            download.status = "failed"  # Mark as failed since it's incomplete
-            self.db.commit()
-            return False
+        # Safety check: don't move if most files failed
+        if download.total_files > 0 and download.completed_files > 0:
+            success_rate = download.completed_files / download.total_files
+            if success_rate < 0.5:
+                print(f"slskd: Refusing to move download {download_id} - only {download.completed_files}/{download.total_files} files completed")
+                return False
         
         try:
             # Find downloaded files in slskd download directory
@@ -722,7 +631,7 @@ class SlskdService:
             moved_count = 0
             for root, dirs, files in os.walk(user_dir):
                 for file in files:
-                    if any(file.lower().endswith(ext) for ext in [".mp3", ".flac"]):
+                    if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
                         # Check if file path contains artist or album name
                         file_path = Path(root) / file
                         path_lower = str(file_path).lower()

@@ -1,7 +1,6 @@
 import os
 import re
 import shutil
-import logging
 from pathlib import Path
 from typing import List, Optional, Tuple, Set
 from datetime import datetime
@@ -13,7 +12,6 @@ from app.services.musicbrainz import MusicBrainzService
 from app.config import get_settings
 
 settings = get_settings()
-logger = logging.getLogger("uvicorn.error")
 
 # Supported audio file extensions
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".wav", ".wma", ".aiff"}
@@ -101,7 +99,7 @@ class ScannerService:
                     if track_info.get("artist"):
                         artist_names.append(track_info["artist"])
             except Exception as e:
-                logger.warning(f"Error reading {audio_file}: {e}")
+                print(f"Error reading {audio_file}: {e}")
                 # Still add the file with minimal info
                 tracks_info.append({
                     "title": audio_file.stem,
@@ -141,7 +139,7 @@ class ScannerService:
                     "file_format": file_path.suffix.lstrip(".").upper()
                 }
         except Exception as e:
-            logger.warning(f"Error extracting metadata from {file_path}: {e}")
+            print(f"Error extracting metadata from {file_path}: {e}")
             return None
 
     def _get_tag(self, audio, tag_name: str, default: str = None) -> Optional[str]:
@@ -273,7 +271,7 @@ class ScannerService:
         
         # Check if already organized
         if self._is_properly_organized(current_folder, artist_name, album_title):
-            logger.debug(f"Album already organized: {album_title}")
+            print(f"Album already organized: {album_title}")
             return current_folder, tracks_info
         
         music_root = Path(settings.music_folder)
@@ -291,7 +289,7 @@ class ScannerService:
                 target_dir = music_root / safe_artist / f"{safe_album} ({counter})"
                 counter += 1
         
-        logger.debug(f"Organizing: {current_folder} -> {target_dir}")
+        print(f"Organizing: {current_folder} -> {target_dir}")
         
         # Create directory structure
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -336,14 +334,14 @@ class ScannerService:
             try:
                 if old_path != new_path:
                     shutil.move(str(old_path), str(new_path))
-                    logger.debug(f"  Moved: {old_path.name} -> {new_path.name}")
+                    print(f"  Moved: {old_path.name} -> {new_path.name}")
                 
                 # Update track info
                 updated_track = track.copy()
                 updated_track["file_path"] = str(new_path)
                 updated_tracks.append(updated_track)
             except Exception as e:
-                logger.warning(f"  Error moving {old_path}: {e}")
+                print(f"  Error moving {old_path}: {e}")
                 updated_tracks.append(track)
         
         # Move any remaining files (cover art, etc.)
@@ -355,9 +353,9 @@ class ScannerService:
                     if not target_file.exists():
                         try:
                             shutil.move(str(item), str(target_file))
-                            logger.debug(f"  Moved extra file: {item.name}")
+                            print(f"  Moved extra file: {item.name}")
                         except Exception as e:
-                            logger.warning(f"  Error moving {item}: {e}")
+                            print(f"  Error moving {item}: {e}")
         
         # Remove old folder if empty
         self._remove_empty_folders(current_folder_path)
@@ -378,27 +376,23 @@ class ScannerService:
                     for f in current.iterdir():
                         f.unlink()
                     current.rmdir()
-                    logger.debug(f"  Removed empty folder: {current}")
+                    print(f"  Removed empty folder: {current}")
                     current = current.parent
                 else:
                     break
             except Exception as e:
-                logger.warning(f"  Error removing folder {current}: {e}")
+                print(f"  Error removing folder {current}: {e}")
                 break
 
     def scan_album_folder(self, folder_path: str, force_rescan: bool = False) -> Optional[Album]:
         """Scan a single album folder and create/update database records."""
-        logger.debug(f"  [ALBUM] Scanning: {folder_path}")
-        
         # Check if album already exists
         existing = self.db.query(Album).filter(Album.folder_path == folder_path).first()
         if existing and existing.is_scanned and not force_rescan:
-            logger.debug(f"  [ALBUM] Already scanned, skipping")
             return existing
 
         # Extract metadata from files
         album_title, artist_name, tracks_info = self.extract_metadata_from_files(folder_path)
-        logger.debug(f"  [ALBUM] Found: {artist_name} - {album_title} ({len(tracks_info)} tracks)")
 
         # Search MusicBrainz for additional info
         mb_info = None
@@ -512,20 +506,20 @@ class ScannerService:
         Returns the number of missing albums added.
         """
         if not artist.musicbrainz_id:
-            logger.debug(f"Artist {artist.name} has no MusicBrainz ID, skipping discography fetch")
+            print(f"Artist {artist.name} has no MusicBrainz ID, skipping discography fetch")
             return 0
 
         # Skip if we've already fetched the discography recently
         if artist.discography_fetched:
             return 0
 
-        logger.debug(f"Fetching discography for {artist.name}...")
+        print(f"Fetching discography for {artist.name}...")
         
         # Get all release groups from MusicBrainz
         releases = MusicBrainzService.get_artist_releases(artist.musicbrainz_id)
         
         if not releases:
-            logger.debug(f"No releases found for {artist.name}")
+            print(f"No releases found for {artist.name}")
             artist.discography_fetched = True
             self.db.commit()
             return 0
@@ -572,7 +566,7 @@ class ScannerService:
         artist.discography_fetched = True
         self.db.commit()
         
-        logger.debug(f"Added {missing_count} missing albums for {artist.name}")
+        print(f"Added {missing_count} missing albums for {artist.name}")
         return missing_count
 
     def scan_library(self, force_rescan: bool = False) -> ScanStatus:
@@ -593,54 +587,27 @@ class ScannerService:
 
         try:
             # Find all album folders
-            logger.info(f"Finding album folders in {settings.music_folder}...")
             album_folders = self.find_album_folders(settings.music_folder)
             status.total_folders = len(album_folders)
             self.db.commit()
-            logger.info(f"Found {len(album_folders)} album folders to scan")
 
             # Scan each folder (this will also organize files)
             scanned_paths = set()
-            errors = []
             for i, folder_path in enumerate(album_folders):
-                # Check if scan was cancelled
-                self.db.refresh(status)
-                if status.status == "cancelled":
-                    logger.info("Scan was cancelled by user, stopping...")
-                    return status
-                
                 status.current_folder = folder_path
                 status.scanned_folders = i + 1
-                
-                # Commit progress every 10 albums to reduce DB load
-                if i % 10 == 0:
-                    self.db.commit()
-                    logger.info(f"Progress: {i + 1}/{len(album_folders)} - {folder_path}")
+                self.db.commit()
 
                 try:
                     album = self.scan_album_folder(folder_path, force_rescan)
                     if album and album.folder_path:
                         scanned_paths.add(album.folder_path)
                 except Exception as e:
-                    import traceback
-                    error_msg = f"Error scanning {folder_path}: {e}"
-                    logger.error(error_msg)
-                    logger.error(traceback.format_exc())
-                    errors.append(error_msg)
-                    # Rollback any failed transaction and continue
-                    try:
-                        self.db.rollback()
-                    except:
-                        pass
+                    print(f"Error scanning {folder_path}: {e}")
                     continue
-            
-            # Store any errors for debugging
-            if errors:
-                logger.warning(f"Completed with {len(errors)} errors")
-                status.error_message = f"{len(errors)} albums failed to scan. First error: {errors[0][:200]}"
 
             # Check for albums that no longer exist on disk
-            logger.info("Checking for deleted albums...")
+            print("Checking for deleted albums...")
             owned_albums = self.db.query(Album).filter(
                 Album.is_owned == True,
                 Album.folder_path.isnot(None)
@@ -650,7 +617,7 @@ class ScannerService:
             for album in owned_albums:
                 # Check if folder still exists
                 if album.folder_path and not Path(album.folder_path).exists():
-                    logger.info(f"Album folder deleted: {album.title} ({album.folder_path})")
+                    print(f"Album folder deleted: {album.title} ({album.folder_path})")
                     album.is_owned = False
                     album.folder_path = None
                     # Delete associated tracks since files are gone
@@ -659,43 +626,31 @@ class ScannerService:
             
             if deleted_count > 0:
                 self.db.commit()
-                logger.info(f"Marked {deleted_count} albums as no longer owned (folders deleted)")
+                print(f"Marked {deleted_count} albums as no longer owned (folders deleted)")
 
             # After scanning owned albums, fetch discographies for all artists
-            logger.info("Fetching artist discographies...")
+            print("Fetching artist discographies...")
             artists = self.db.query(Artist).filter(
                 Artist.musicbrainz_id.isnot(None)
             ).all()
             
-            for idx, artist in enumerate(artists):
+            for artist in artists:
                 try:
-                    if idx % 10 == 0:
-                        logger.info(f"Artist discography progress: {idx + 1}/{len(artists)}")
                     # Reset discography_fetched if force_rescan
                     if force_rescan:
                         artist.discography_fetched = False
                         self.db.commit()
                     self.fetch_artist_discography(artist)
                 except Exception as e:
-                    import traceback
-                    logger.error(f"Error fetching discography for {artist.name}: {e}")
-                    logger.error(traceback.format_exc())
-                    try:
-                        self.db.rollback()
-                    except:
-                        pass
+                    print(f"Error fetching discography for {artist.name}: {e}")
                     continue
 
             status.status = "completed"
             status.completed_at = datetime.utcnow()
-            logger.info(f"Scan completed! Scanned {status.scanned_folders} folders.")
 
         except Exception as e:
-            import traceback
-            logger.error(f"Fatal scan error: {e}")
-            logger.error(traceback.format_exc())
             status.status = "error"
-            status.error_message = str(e)[:500]
+            status.error_message = str(e)
             status.completed_at = datetime.utcnow()
 
         self.db.commit()

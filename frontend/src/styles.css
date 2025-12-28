@@ -225,36 +225,6 @@ body::before {
   color: var(--text-secondary);
 }
 
-.scan-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.cancel-scan-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 150ms ease;
-}
-
-.cancel-scan-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ef4444;
-}
-
-.cancel-scan-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
 .scan-progress-bar.upcoming {
   background: #22c55e;
 }
@@ -510,23 +480,6 @@ body::before {
   border: 3px solid var(--border-color);
   border-top-color: var(--accent);
   border-radius: 50%;
-}
-
-.load-more-trigger {
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.loading-more {
-  padding: 20px;
-}
-
-.loading-more .loading-spinner {
-  width: 24px;
-  height: 24px;
-  border-width: 2px;
   animation: spin 1s linear infinite;
 }
 
@@ -1002,14 +955,12 @@ body::before {
 
 /* Album Ownership Status in Detail */
 .album-ownership-status {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  height: 28px;
-  box-sizing: border-box;
+  margin-bottom: 12px;
 }
 
 .album-ownership-status.owned {
@@ -1197,61 +1148,6 @@ body::before {
 }
 
 .search-albums-btn svg {
-  width: 18px;
-  height: 18px;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.download-all-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: white;
-  border: none;
-  border-radius: var(--radius-md);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--transition);
-}
-
-.download-all-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #059669, #047857);
-  transform: translateY(-1px);
-}
-
-.download-all-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.download-all-btn svg {
-  width: 18px;
-  height: 18px;
-}
-
-.wishlist-download-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--accent);
-}
-
-.wishlist-download-progress svg {
   width: 18px;
   height: 18px;
 }
