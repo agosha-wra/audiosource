@@ -1311,8 +1311,41 @@ def apply_metadata(
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
     
-    # Get release details from MusicBrainz
+    # Check if another album already has this musicbrainz_id
+    existing = db.query(Album).filter(
+        Album.musicbrainz_id == request.musicbrainz_id,
+        Album.id != album_id
+    ).first()
+    
+    if existing:
+        # If the existing album is not owned (it's a "missing" album), delete it
+        # and transfer the metadata to the owned album
+        if not existing.is_owned and album.is_owned:
+            db.delete(existing)
+            db.flush()
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"This MusicBrainz ID is already used by album '{existing.title}'"
+            )
+    
+    # Get release details from MusicBrainz - try as release first, then as release group
     release_details = MusicBrainzService.get_release_details(request.musicbrainz_id)
+    if not release_details:
+        # It might be a release group ID, try to get first release from release group
+        try:
+            import musicbrainzngs
+            rg_result = musicbrainzngs.get_release_group_by_id(
+                request.musicbrainz_id,
+                includes=["releases"]
+            )
+            releases = rg_result.get("release-group", {}).get("release-list", [])
+            if releases:
+                # Get the first release's details
+                release_details = MusicBrainzService.get_release_details(releases[0].get("id"))
+        except:
+            pass
+    
     if not release_details:
         raise HTTPException(status_code=404, detail="Release not found on MusicBrainz")
     
