@@ -5,28 +5,52 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import re
+import time
+import random
+import logging
 from sqlalchemy.orm import Session
 
 from app.models import NewRelease, NewReleasesScrapeStatus
+
+logger = logging.getLogger(__name__)
 
 
 class AOTYService:
     """Service for scraping AOTY weekly releases."""
     
     BASE_URL = "https://www.albumoftheyear.org"
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
-    }
+    
+    # Rotate between different realistic user agents
+    USER_AGENTS = [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    ]
+    
+    def _get_headers(self, referer: str = None) -> dict:
+        """Get randomized headers for each request."""
+        ua = random.choice(self.USER_AGENTS)
+        headers = {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"macOS"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none" if not referer else "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+            "Dnt": "1",
+        }
+        if referer:
+            headers["Referer"] = referer
+        return headers
     
     def __init__(self, db: Session):
         self.db = db
@@ -85,9 +109,34 @@ class AOTYService:
             # Construct URL
             url = f"{self.BASE_URL}/week/{year}/{week}/releases/?sort=critic"
             
-            # Make request with browser-like headers
-            response = httpx.get(url, headers=self.HEADERS, timeout=30, follow_redirects=True)
-            response.raise_for_status()
+            logger.info(f"[AOTY] Scraping {url}")
+            
+            # Use a client with cookies enabled to maintain session
+            with httpx.Client(
+                follow_redirects=True,
+                timeout=30,
+                http2=True,  # Use HTTP/2 like modern browsers
+            ) as client:
+                # First, visit the homepage to get cookies
+                try:
+                    home_response = client.get(
+                        self.BASE_URL,
+                        headers=self._get_headers()
+                    )
+                    logger.info(f"[AOTY] Homepage status: {home_response.status_code}")
+                    # Small delay to look more human
+                    time.sleep(random.uniform(0.5, 1.5))
+                except Exception as e:
+                    logger.warning(f"[AOTY] Homepage visit failed: {e}")
+                
+                # Now fetch the actual page with a referer
+                response = client.get(
+                    url, 
+                    headers=self._get_headers(referer=self.BASE_URL)
+                )
+                response.raise_for_status()
+            
+            logger.info(f"[AOTY] Got response: {response.status_code}, length: {len(response.text)}")
             
             # Parse HTML
             soup = BeautifulSoup(response.text, "lxml")
@@ -103,7 +152,7 @@ class AOTYService:
                         self._save_release(release_data)
                         albums_found += 1
                 except Exception as e:
-                    print(f"Error parsing album block: {e}")
+                    logger.warning(f"[AOTY] Error parsing album block: {e}")
                     continue
             
             # Update status
@@ -111,6 +160,8 @@ class AOTYService:
             status.albums_found = albums_found
             status.next_scrape_at = datetime.utcnow() + timedelta(hours=24)
             self.db.commit()
+            
+            logger.info(f"[AOTY] Scrape completed: {albums_found} albums found for week {week}/{year}")
             
             return {
                 "status": "completed",
@@ -120,6 +171,7 @@ class AOTYService:
             }
             
         except Exception as e:
+            logger.error(f"[AOTY] Scrape failed: {e}")
             status.status = "error"
             status.error_message = str(e)
             self.db.commit()
@@ -227,7 +279,7 @@ class AOTYService:
             }
             
         except Exception as e:
-            print(f"Error parsing album block: {e}")
+            logger.warning(f"[AOTY] Error parsing album block: {e}")
             return None
     
     def _save_release(self, data: Dict[str, Any]) -> NewRelease:
