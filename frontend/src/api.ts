@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings } from './types';
 
 const API_BASE = '/api';
 
@@ -156,4 +156,26 @@ export async function cancelDownload(downloadId: number): Promise<Download> {
 
 export async function deleteDownload(downloadId: number): Promise<void> {
   await fetchApi(`/downloads/${downloadId}`, { method: 'DELETE' });
+}
+
+// Cancel scan
+export async function cancelScan(): Promise<ScanStatus> {
+  return fetchApi<ScanStatus>('/scan/cancel', { method: 'POST' });
+}
+
+// Metadata matching
+export async function getMetadataMatches(albumId: number): Promise<MetadataMatchCandidate[]> {
+  return fetchApi<MetadataMatchCandidate[]>(`/albums/${albumId}/metadata-matches`);
+}
+
+export async function applyMetadata(albumId: number, musicbrainzId: string): Promise<Album> {
+  return fetchApi<Album>(`/albums/${albumId}/apply-metadata`, {
+    method: 'POST',
+    body: JSON.stringify({ musicbrainz_id: musicbrainzId }),
+  });
+}
+
+// Settings
+export async function getAppSettings(): Promise<AppSettings> {
+  return fetchApi<AppSettings>('/settings');
 }
