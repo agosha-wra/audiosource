@@ -165,10 +165,11 @@ def list_albums(
     limit: int = 100,
     search: Optional[str] = None,
     owned_only: bool = True,
+    sort: str = "title",
     db: Session = Depends(get_db)
 ):
-    """List albums with optional search. By default only shows owned albums."""
-    query = db.query(Album).order_by(Album.title)
+    """List albums with optional search and sorting. By default only shows owned albums."""
+    query = db.query(Album)
 
     if owned_only:
         query = query.filter(Album.is_owned == True)
@@ -176,6 +177,24 @@ def list_albums(
     if search:
         search_term = f"%{search}%"
         query = query.filter(Album.title.ilike(search_term))
+
+    # Apply sorting
+    if sort == "title":
+        query = query.order_by(Album.title)
+    elif sort == "title_desc":
+        query = query.order_by(Album.title.desc())
+    elif sort == "date_added":
+        query = query.order_by(Album.id.desc())  # id as proxy for date added
+    elif sort == "release_date":
+        query = query.order_by(Album.release_date.desc().nullslast())
+    elif sort == "release_date_asc":
+        query = query.order_by(Album.release_date.asc().nullsfirst())
+    elif sort == "artist":
+        query = query.join(Artist, isouter=True).order_by(Artist.name, Album.title)
+    elif sort == "artist_desc":
+        query = query.join(Artist, isouter=True).order_by(Artist.name.desc(), Album.title)
+    else:
+        query = query.order_by(Album.title)
 
     albums = query.offset(skip).limit(limit).all()
     return albums
@@ -260,10 +279,23 @@ def refresh_album_covers(
 def list_artists(
     skip: int = 0,
     limit: int = 100,
+    sort: str = "name",
     db: Session = Depends(get_db)
 ):
     """List all artists with album counts."""
-    artists = db.query(Artist).order_by(Artist.name).offset(skip).limit(limit).all()
+    query = db.query(Artist)
+    
+    # Apply sorting
+    if sort == "name":
+        query = query.order_by(Artist.name)
+    elif sort == "name_desc":
+        query = query.order_by(Artist.name.desc())
+    elif sort == "date_added":
+        query = query.order_by(Artist.id.desc())  # id as proxy for date added
+    else:
+        query = query.order_by(Artist.name)
+    
+    artists = query.offset(skip).limit(limit).all()
     
     result = []
     for artist in artists:

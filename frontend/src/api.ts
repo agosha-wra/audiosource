@@ -17,17 +17,25 @@ async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise
   return response.json();
 }
 
-export async function getAlbums(search = ''): Promise<Album[]> {
-  const params = search ? `?search=${encodeURIComponent(search)}` : '';
-  return fetchApi<Album[]>(`/albums${params}`);
+export async function getAlbums(search = '', skip = 0, limit = 100, sort = 'title'): Promise<Album[]> {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  params.set('skip', skip.toString());
+  params.set('limit', limit.toString());
+  params.set('sort', sort);
+  return fetchApi<Album[]>(`/albums?${params.toString()}`);
 }
 
 export async function getAlbum(id: number): Promise<Album> {
   return fetchApi<Album>(`/albums/${id}`);
 }
 
-export async function getArtists(): Promise<Artist[]> {
-  return fetchApi<Artist[]>('/artists');
+export async function getArtists(skip = 0, limit = 100, sort = 'name'): Promise<Artist[]> {
+  const params = new URLSearchParams();
+  params.set('skip', skip.toString());
+  params.set('limit', limit.toString());
+  params.set('sort', sort);
+  return fetchApi<Artist[]>(`/artists?${params.toString()}`);
 }
 
 export async function getArtist(id: number): Promise<Artist> {

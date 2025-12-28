@@ -283,6 +283,33 @@ body::before {
   backdrop-filter: blur(12px);
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sort-select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+  transition: all 150ms ease;
+}
+
+.sort-select:hover {
+  border-color: var(--accent);
+}
+
+.sort-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
+}
+
 .header h1 {
   font-size: 28px;
   font-weight: 700;
@@ -485,6 +512,23 @@ body::before {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.load-more-trigger {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-more {
+  padding: 20px;
+}
+
+.loading-more .loading-spinner {
+  width: 24px;
+  height: 24px;
+  border-width: 2px;
 }
 
 /* Modal */
