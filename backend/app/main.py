@@ -25,7 +25,13 @@ from app.schemas import (
     NewReleasesScrapeStatusResponse,
     DownloadResponse,
     SlskdStatusResponse,
+    MetadataMatchCandidate,
+    ApplyMetadataRequest,
+    AppSettingsResponse,
+    SlskdSettingsResponse,
 )
+from app.config import get_settings
+from difflib import SequenceMatcher
 from app.services.scanner import ScannerService
 from app.services.musicbrainz import MusicBrainzService
 from app.services.upcoming import UpcomingReleasesService
@@ -1156,3 +1162,167 @@ def delete_download(download_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": "Download deleted"}
+
+
+# ============ Settings Endpoints ============
+
+@app.get("/api/settings", response_model=AppSettingsResponse)
+def get_app_settings():
+    """Get current app settings from environment variables."""
+    settings = get_settings()
+    
+    # Mask database URL for security
+    db_url = settings.database_url
+    if "@" in db_url:
+        # Mask password in connection string
+        parts = db_url.split("@")
+        if ":" in parts[0]:
+            prefix = parts[0].rsplit(":", 1)[0]
+            db_url = f"{prefix}:****@{parts[1]}"
+    
+    return AppSettingsResponse(
+        music_folder=settings.music_folder,
+        database_url=db_url,
+        slskd=SlskdSettingsResponse(
+            enabled=settings.slskd_enabled,
+            url=settings.slskd_url,
+            download_dir=settings.slskd_download_dir,
+            api_key_set=bool(settings.slskd_api_key)
+        )
+    )
+
+
+# ============ Metadata Match Endpoints ============
+
+@app.get("/api/albums/{album_id}/metadata-matches", response_model=List[MetadataMatchCandidate])
+def get_metadata_matches(album_id: int, db: Session = Depends(get_db)):
+    """Search MusicBrainz for metadata matches for an album."""
+    from app.models import Track
+    
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    artist_name = album.artist.name if album.artist else ""
+    query = f"{artist_name} {album.title}"
+    
+    # Search MusicBrainz
+    results = MusicBrainzService.search_releases_multi(query)
+    
+    candidates = []
+    for result in results[:10]:  # Limit to top 10
+        # Calculate match score
+        title_ratio = SequenceMatcher(None, album.title.lower(), result.get("title", "").lower()).ratio()
+        artist_ratio = SequenceMatcher(None, artist_name.lower(), result.get("artist_name", "").lower()).ratio()
+        match_score = int((title_ratio * 0.6 + artist_ratio * 0.4) * 100)
+        
+        # Get cover art URL
+        mb_id = result.get("id")
+        cover_url = None
+        if mb_id:
+            # Try release group cover first
+            rg_id = result.get("release-group", {}).get("id")
+            if rg_id:
+                cover_url = MusicBrainzService.get_release_group_cover_art_url(rg_id)
+            if not cover_url:
+                cover_url = MusicBrainzService.get_cover_art_url(mb_id)
+        
+        candidates.append(MetadataMatchCandidate(
+            musicbrainz_id=mb_id,
+            title=result.get("title", "Unknown"),
+            artist_name=result.get("artist_name"),
+            release_date=result.get("date"),
+            release_type=result.get("primary-type"),
+            track_count=result.get("track-count"),
+            country=result.get("country"),
+            cover_art_url=cover_url,
+            match_score=match_score
+        ))
+    
+    # Sort by match score descending
+    candidates.sort(key=lambda c: c.match_score, reverse=True)
+    
+    return candidates
+
+
+@app.post("/api/albums/{album_id}/apply-metadata", response_model=AlbumDetailResponse)
+def apply_metadata(
+    album_id: int,
+    request: ApplyMetadataRequest,
+    db: Session = Depends(get_db)
+):
+    """Apply MusicBrainz metadata to an album."""
+    from app.models import Track
+    
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    # Get release details from MusicBrainz
+    release_details = MusicBrainzService.get_release_details(request.musicbrainz_id)
+    if not release_details:
+        raise HTTPException(status_code=404, detail="Release not found on MusicBrainz")
+    
+    # Update album fields
+    album.musicbrainz_id = request.musicbrainz_id
+    album.title = release_details.get("title", album.title)
+    album.release_date = release_details.get("date")
+    album.release_type = release_details.get("primary-type")
+    
+    # Get cover art
+    rg_id = release_details.get("release-group", {}).get("id")
+    if rg_id:
+        album.cover_art_url = MusicBrainzService.get_release_group_cover_art_url(rg_id)
+    if not album.cover_art_url:
+        album.cover_art_url = MusicBrainzService.get_cover_art_url(request.musicbrainz_id)
+    
+    # Update artist if available
+    artist_credit = release_details.get("artist-credit", [])
+    if artist_credit:
+        artist_info = artist_credit[0].get("artist", {})
+        if artist_info:
+            artist_name = artist_info.get("name")
+            if artist_name and album.artist:
+                album.artist.name = artist_name
+                album.artist.musicbrainz_id = artist_info.get("id")
+    
+    # Update tracks if we have media info
+    media = release_details.get("media", [])
+    if media:
+        mb_tracks = []
+        for medium in media:
+            for track in medium.get("tracks", []):
+                mb_tracks.append({
+                    "number": track.get("number"),
+                    "title": track.get("title"),
+                    "position": track.get("position")
+                })
+        
+        # Get existing tracks
+        existing_tracks = db.query(Track).filter(Track.album_id == album_id).all()
+        
+        # Match and update tracks
+        for local_track in existing_tracks:
+            best_match = None
+            best_ratio = 0
+            
+            for mb_track in mb_tracks:
+                ratio = SequenceMatcher(None, 
+                    local_track.title.lower(), 
+                    mb_track["title"].lower()
+                ).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_match = mb_track
+            
+            if best_match and best_ratio > 0.5:
+                local_track.title = best_match["title"]
+                if best_match.get("position"):
+                    local_track.track_number = best_match["position"]
+        
+        album.track_count = len(mb_tracks)
+    
+    db.commit()
+    db.refresh(album)
+    
+    return album

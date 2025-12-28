@@ -156,13 +156,17 @@ export interface MetadataMatchCandidate {
   release_type: string | null;
   track_count: number | null;
   country: string | null;
-  score: number;
+  cover_art_url: string | null;
+  match_score: number;
 }
 
 export interface AppSettings {
   music_folder: string;
   database_url: string;
-  slskd_enabled: boolean;
-  slskd_url: string | null;
-  slskd_download_dir: string | null;
+  slskd: {
+    enabled: boolean;
+    url: string | null;
+    download_dir: string | null;
+    api_key_set: boolean;
+  };
 }

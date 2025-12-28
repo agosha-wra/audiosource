@@ -215,3 +215,36 @@ class SlskdStatusResponse(BaseModel):
     enabled: bool
     available: bool
     url: Optional[str] = None
+
+
+# ============ Metadata Match Schemas ============
+
+class MetadataMatchCandidate(BaseModel):
+    musicbrainz_id: str
+    title: str
+    artist_name: Optional[str] = None
+    release_date: Optional[str] = None
+    release_type: Optional[str] = None
+    track_count: Optional[int] = None
+    country: Optional[str] = None
+    cover_art_url: Optional[str] = None
+    match_score: int = 0
+
+
+class ApplyMetadataRequest(BaseModel):
+    musicbrainz_id: str
+
+
+# ============ App Settings Schemas ============
+
+class SlskdSettingsResponse(BaseModel):
+    enabled: bool
+    url: Optional[str] = None
+    download_dir: Optional[str] = None
+    api_key_set: bool = False
+
+
+class AppSettingsResponse(BaseModel):
+    music_folder: str
+    database_url: str
+    slskd: SlskdSettingsResponse
