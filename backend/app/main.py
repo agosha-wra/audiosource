@@ -1266,7 +1266,7 @@ def get_metadata_matches(album_id: int, db: Session = Depends(get_db)):
     candidates = []
     for result in results[:10]:  # Limit to top 10
         # Skip results without a musicbrainz_id
-        mb_id = result.get("id")
+        mb_id = result.get("musicbrainz_id")
         if not mb_id:
             continue
         
@@ -1275,23 +1275,19 @@ def get_metadata_matches(album_id: int, db: Session = Depends(get_db)):
         artist_ratio = SequenceMatcher(None, artist_name.lower(), result.get("artist_name", "").lower()).ratio()
         match_score = int((title_ratio * 0.6 + artist_ratio * 0.4) * 100)
         
-        # Get cover art URL
-        cover_url = None
-        # Try release group cover first
-        rg_id = result.get("release-group", {}).get("id")
-        if rg_id:
-            cover_url = MusicBrainzService.get_release_group_cover_art_url(rg_id)
+        # Get cover art URL - the search returns release group IDs, so use directly
+        cover_url = result.get("cover_art_url")
         if not cover_url:
-            cover_url = MusicBrainzService.get_cover_art_url(mb_id)
+            cover_url = MusicBrainzService.get_release_group_cover_art_url(mb_id)
         
         candidates.append(MetadataMatchCandidate(
             musicbrainz_id=mb_id,
             title=result.get("title", "Unknown"),
             artist_name=result.get("artist_name"),
-            release_date=result.get("date"),
-            release_type=result.get("primary-type"),
-            track_count=result.get("track-count"),
-            country=result.get("country"),
+            release_date=result.get("release_date"),
+            release_type=result.get("release_type"),
+            track_count=None,  # Release groups don't have track count
+            country=None,  # Release groups don't have country
             cover_art_url=cover_url,
             match_score=match_score
         ))
