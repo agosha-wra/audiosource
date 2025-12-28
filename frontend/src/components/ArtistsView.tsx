@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Artist } from '../types';
-import { getArtists, deleteArtist } from '../api';
+import type { Artist, UpcomingStatus } from '../types';
+import { getArtists, deleteArtist, fetchMissingAlbums, getUpcomingStatus } from '../api';
 
 interface ArtistsViewProps {
   onArtistClick: (artistId: number) => void;
@@ -26,6 +26,8 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
   const [hasMore, setHasMore] = useState(true);
   const [sort, setSort] = useState('name');
   const [deleting, setDeleting] = useState<Set<number>>(new Set());
+  const [fetchingMissing, setFetchingMissing] = useState(false);
+  const [fetchStatus, setFetchStatus] = useState<UpcomingStatus | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
@@ -112,11 +114,68 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
     return (artist.owned_album_count || 0) === 0;
   };
 
+  // Handle fetch missing albums
+  const handleFetchMissing = async () => {
+    try {
+      setFetchingMissing(true);
+      await fetchMissingAlbums();
+    } catch (error) {
+      console.error('Error starting fetch:', error);
+      setFetchingMissing(false);
+    }
+  };
+
+  // Poll for fetch status when fetching
+  useEffect(() => {
+    if (!fetchingMissing) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const status = await getUpcomingStatus();
+        setFetchStatus(status);
+        
+        if (status.status === 'completed' || status.status === 'error' || status.status === 'idle') {
+          setFetchingMissing(false);
+          // Refresh artists list
+          const data = await getArtists(0, ARTISTS_PER_PAGE, sort);
+          setArtists(data);
+          setHasMore(data.length === ARTISTS_PER_PAGE);
+        }
+      } catch (error) {
+        console.error('Error checking fetch status:', error);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [fetchingMissing, sort]);
+
   return (
     <>
       <header className="header">
         <h1>Artists</h1>
         <div className="header-controls">
+          <button 
+            className="fetch-missing-btn"
+            onClick={handleFetchMissing}
+            disabled={fetchingMissing}
+          >
+            {fetchingMissing ? (
+              <>
+                <div className="btn-spinner-small" />
+                <span>
+                  {fetchStatus ? `${fetchStatus.artists_checked}/${fetchStatus.total_artists}` : 'Starting...'}
+                </span>
+              </>
+            ) : (
+              <>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                  <path d="M12 8v4l2 2"/>
+                </svg>
+                <span>Fetch Missing Albums</span>
+              </>
+            )}
+          </button>
           <select 
             className="sort-select" 
             value={sort} 

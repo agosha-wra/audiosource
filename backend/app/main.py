@@ -761,6 +761,45 @@ def get_upcoming_albums(db: Session = Depends(get_db)):
     return albums
 
 
+# Background task for fetching missing albums
+def run_fetch_missing_albums_in_background():
+    """Run the missing albums fetch in a background thread."""
+    db = SessionLocal()
+    try:
+        with _upcoming_lock:
+            service = UpcomingReleasesService(db)
+            service.fetch_missing_albums_for_all_artists()
+    finally:
+        db.close()
+
+
+@app.post("/api/artists/fetch-missing", response_model=UpcomingReleasesStatusResponse)
+def fetch_missing_albums(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch missing albums from MusicBrainz for all artists in the library.
+    This populates the 'missing albums' count for each artist.
+    """
+    service = UpcomingReleasesService(db)
+    status = service.get_or_create_status()
+    
+    # If already scanning, return current status
+    if status.status == "scanning":
+        return status
+    
+    # Mark as pending
+    status.status = "pending"
+    db.commit()
+    db.refresh(status)
+    
+    # Start background fetch
+    background_tasks.add_task(run_fetch_missing_albums_in_background)
+    
+    return status
+
+
 # ============ New Releases (AOTY Scraping) ============
 
 # Background task lock for AOTY scraping

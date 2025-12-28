@@ -159,3 +159,102 @@ class UpcomingReleasesService:
         
         return updated
 
+    def fetch_missing_albums_for_all_artists(self) -> UpcomingReleasesStatus:
+        """
+        Fetch all albums from MusicBrainz for each artist and add missing ones.
+        This populates the 'missing albums' for each artist.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        status = self.get_or_create_status()
+        
+        # Check if already scanning
+        if status.status == "scanning":
+            return status
+        
+        # Start scanning
+        status.status = "scanning"
+        status.started_at = datetime.utcnow()
+        status.completed_at = None
+        status.error_message = None
+        status.releases_found = 0
+        status.artists_checked = 0
+        self.db.commit()
+        
+        try:
+            artists = self.get_artists_with_owned_albums()
+            status.total_artists = len(artists)
+            self.db.commit()
+            
+            total_added = 0
+            
+            for i, artist in enumerate(artists):
+                status.artists_checked = i + 1
+                self.db.commit()
+                
+                if not artist.musicbrainz_id:
+                    continue
+                
+                try:
+                    logger.info(f"[FETCH] Fetching albums for {artist.name} ({i+1}/{len(artists)})")
+                    
+                    # Also fetch artist image if we don't have one
+                    if not artist.image_url:
+                        image_url = MusicBrainzService.get_artist_image_url(artist.musicbrainz_id)
+                        if image_url:
+                            artist.image_url = image_url
+                            self.db.commit()
+                    
+                    # Get ALL releases for this artist (albums and EPs)
+                    releases = MusicBrainzService.get_artist_releases(artist.musicbrainz_id)
+                    
+                    for release in releases:
+                        mbid = release.get("musicbrainz_id")
+                        if not mbid:
+                            continue
+                        
+                        # Check if we already have this album
+                        existing = self.db.query(Album).filter(
+                            Album.musicbrainz_id == mbid
+                        ).first()
+                        
+                        if not existing:
+                            # Create new album as NOT owned and NOT wishlisted
+                            # This populates the "missing" albums
+                            new_album = Album(
+                                title=release.get("title", "Unknown Album"),
+                                musicbrainz_id=mbid,
+                                artist_id=artist.id,
+                                release_date=release.get("release_date"),
+                                release_type=release.get("release_type"),
+                                cover_art_url=release.get("cover_art_url"),
+                                is_owned=False,
+                                is_wishlisted=False,
+                                is_scanned=True
+                            )
+                            self.db.add(new_album)
+                            self.db.commit()
+                            total_added += 1
+                            logger.info(f"[FETCH] Added: {release.get('title')} by {artist.name}")
+                
+                except Exception as e:
+                    logger.error(f"[FETCH] Error fetching albums for {artist.name}: {e}")
+                    continue
+            
+            status.releases_found = total_added
+            status.status = "completed"
+            status.completed_at = datetime.utcnow()
+            status.last_check_at = datetime.utcnow()
+            logger.info(f"[FETCH] Completed. Added {total_added} missing albums.")
+            
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"[FETCH] Failed: {e}")
+            status.status = "error"
+            status.error_message = str(e)
+            status.completed_at = datetime.utcnow()
+        
+        self.db.commit()
+        return status
+

@@ -102,6 +102,10 @@ export async function getUpcomingAlbums(): Promise<Album[]> {
   return fetchApi<Album[]>('/upcoming/albums');
 }
 
+export async function fetchMissingAlbums(): Promise<UpcomingStatus> {
+  return fetchApi<UpcomingStatus>('/artists/fetch-missing', { method: 'POST' });
+}
+
 // New Releases (AOTY)
 export async function getNewReleases(year?: number, week?: number): Promise<NewRelease[]> {
   const params = new URLSearchParams();

@@ -289,6 +289,36 @@ body::before {
   gap: 12px;
 }
 
+.fetch-missing-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.fetch-missing-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.fetch-missing-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.fetch-missing-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .sort-select {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
