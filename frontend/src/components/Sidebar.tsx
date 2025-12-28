@@ -10,6 +10,7 @@ interface SidebarProps {
   onNavigate: (view: View) => void;
   onScan: () => void;
   onCheckUpcoming: () => void;
+  onCancelScan?: () => void;
 }
 
 export default function Sidebar({ 
@@ -21,7 +22,8 @@ export default function Sidebar({
   isCheckingUpcoming,
   onNavigate, 
   onScan,
-  onCheckUpcoming
+  onCheckUpcoming,
+  onCancelScan
 }: SidebarProps) {
   const progress = scanStatus && scanStatus.total_folders > 0
     ? (scanStatus.scanned_folders / scanStatus.total_folders) * 100
@@ -128,13 +130,24 @@ export default function Sidebar({
             <div className="scan-progress">
               <div className="scan-progress-bar" style={{ width: `${progress}%` }} />
             </div>
-            <span className="scan-text">
-              {scanStatus?.status === 'scanning'
-                ? `Scanning ${scanStatus.scanned_folders}/${scanStatus.total_folders}...`
-                : scanStatus?.status === 'completed'
-                ? 'Scan completed!'
-                : 'Starting scan...'}
-            </span>
+            <div className="scan-status-row">
+              <span className="scan-text">
+                {scanStatus?.status === 'scanning'
+                  ? `Scanning ${scanStatus.scanned_folders}/${scanStatus.total_folders}...`
+                  : scanStatus?.status === 'completed'
+                  ? 'Scan completed!'
+                  : scanStatus?.status === 'cancelled'
+                  ? 'Scan cancelled'
+                  : 'Starting scan...'}
+              </span>
+              {onCancelScan && scanStatus?.status === 'scanning' && (
+                <button className="cancel-scan-btn" onClick={onCancelScan} title="Cancel scan">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         ) : isCheckingUpcoming ? (
           <div className="scan-status">

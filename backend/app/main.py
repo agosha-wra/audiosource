@@ -493,6 +493,21 @@ def get_scan_status(db: Session = Depends(get_db)):
     return scanner.get_or_create_scan_status()
 
 
+@app.post("/api/scan/cancel", response_model=ScanStatusResponse)
+def cancel_scan(db: Session = Depends(get_db)):
+    """Cancel an ongoing library scan."""
+    scanner = ScannerService(db)
+    status = scanner.get_or_create_scan_status()
+    
+    if status.status == "scanning" or status.status == "pending":
+        status.status = "cancelled"
+        status.completed_at = datetime.utcnow()
+        db.commit()
+        db.refresh(status)
+    
+    return status
+
+
 @app.get("/api/scan/schedule", response_model=ScanScheduleResponse)
 def get_scan_schedule(db: Session = Depends(get_db)):
     """Get the scan schedule settings."""

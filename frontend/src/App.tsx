@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { View, Stats, ScanStatus, UpcomingStatus } from './types';
-import { getStats, getScanStatus, startScan, checkUpcomingReleases, getUpcomingStatus } from './api';
+import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, getUpcomingStatus } from './api';
 import Sidebar from './components/Sidebar';
 import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
@@ -156,7 +156,7 @@ function App() {
 
     const interval = setInterval(async () => {
       const status = await checkScanStatus();
-      if (status && (status.status === 'completed' || status.status === 'error' || status.status === 'idle')) {
+      if (status && (status.status === 'completed' || status.status === 'error' || status.status === 'idle' || status.status === 'cancelled')) {
         setIsScanning(false);
         refreshStats();
       }
@@ -186,6 +186,16 @@ function App() {
       setIsScanning(true);
     } catch (error) {
       console.error('Error starting scan:', error);
+    }
+  };
+
+  const handleCancelScan = async () => {
+    try {
+      await cancelScan();
+      setIsScanning(false);
+      refreshStats();
+    } catch (error) {
+      console.error('Error cancelling scan:', error);
     }
   };
 
@@ -254,6 +264,7 @@ function App() {
         onNavigate={handleNavigate}
         onScan={handleScan}
         onCheckUpcoming={handleCheckUpcoming}
+        onCancelScan={handleCancelScan}
       />
       
       <main className="main">

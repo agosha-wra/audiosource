@@ -594,6 +594,12 @@ class ScannerService:
             # Scan each folder (this will also organize files)
             scanned_paths = set()
             for i, folder_path in enumerate(album_folders):
+                # Check if scan was cancelled
+                self.db.refresh(status)
+                if status.status == "cancelled":
+                    print("Scan cancelled by user")
+                    return status
+                
                 status.current_folder = folder_path
                 status.scanned_folders = i + 1
                 self.db.commit()
@@ -635,6 +641,12 @@ class ScannerService:
             ).all()
             
             for artist in artists:
+                # Check if scan was cancelled
+                self.db.refresh(status)
+                if status.status == "cancelled":
+                    print("Scan cancelled by user")
+                    return status
+                
                 try:
                     # Reset discography_fetched if force_rescan
                     if force_rescan:
