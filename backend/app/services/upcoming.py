@@ -163,6 +163,7 @@ class UpcomingReleasesService:
         """
         Fetch all albums from MusicBrainz for each artist and add missing ones.
         This populates the 'missing albums' for each artist.
+        Also cleans up duplicate 'missing' albums that match owned albums by title.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -186,6 +187,41 @@ class UpcomingReleasesService:
             artists = self.get_artists_with_owned_albums()
             status.total_artists = len(artists)
             self.db.commit()
+            
+            # First pass: Clean up duplicate "missing" albums that match owned albums
+            logger.info("[FETCH] Cleaning up duplicate missing albums...")
+            duplicates_removed = 0
+            for artist in artists:
+                # Get owned albums for this artist
+                owned_albums = self.db.query(Album).filter(
+                    Album.artist_id == artist.id,
+                    Album.is_owned == True
+                ).all()
+                
+                # Get non-owned albums for this artist
+                missing_albums = self.db.query(Album).filter(
+                    Album.artist_id == artist.id,
+                    Album.is_owned == False
+                ).all()
+                
+                owned_titles = set()
+                for owned in owned_albums:
+                    owned_titles.add(owned.title.lower().strip())
+                    # Also add cleaned version
+                    owned_titles.add(owned.title.lower().strip().split('(')[0].strip())
+                
+                for missing in missing_albums:
+                    missing_title = missing.title.lower().strip()
+                    missing_clean = missing_title.split('(')[0].strip()
+                    
+                    if missing_title in owned_titles or (missing_clean in owned_titles and len(missing_clean) > 3):
+                        logger.info(f"[FETCH] Removing duplicate: {missing.title} by {artist.name}")
+                        self.db.delete(missing)
+                        duplicates_removed += 1
+                
+                self.db.commit()
+            
+            logger.info(f"[FETCH] Removed {duplicates_removed} duplicate albums")
             
             total_added = 0
             
