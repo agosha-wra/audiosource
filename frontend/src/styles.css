@@ -997,14 +997,45 @@ body::before {
   filter: none;
 }
 
+/* Album Header Row */
+.album-header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 /* Album Ownership Status in Detail */
 .album-ownership-status {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 12px;
+  height: 28px;
+}
+
+.fix-metadata-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  height: 28px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.fix-metadata-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
 }
 
 .album-ownership-status.owned {
