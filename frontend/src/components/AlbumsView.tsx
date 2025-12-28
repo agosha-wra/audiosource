@@ -25,7 +25,7 @@ export default function AlbumsView({ onAlbumClick }: AlbumsViewProps) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('title');
+  const [sort, setSort] = useState('date_added');
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 

@@ -1265,21 +1265,24 @@ def get_metadata_matches(album_id: int, db: Session = Depends(get_db)):
     
     candidates = []
     for result in results[:10]:  # Limit to top 10
+        # Skip results without a musicbrainz_id
+        mb_id = result.get("id")
+        if not mb_id:
+            continue
+        
         # Calculate match score
         title_ratio = SequenceMatcher(None, album.title.lower(), result.get("title", "").lower()).ratio()
         artist_ratio = SequenceMatcher(None, artist_name.lower(), result.get("artist_name", "").lower()).ratio()
         match_score = int((title_ratio * 0.6 + artist_ratio * 0.4) * 100)
         
         # Get cover art URL
-        mb_id = result.get("id")
         cover_url = None
-        if mb_id:
-            # Try release group cover first
-            rg_id = result.get("release-group", {}).get("id")
-            if rg_id:
-                cover_url = MusicBrainzService.get_release_group_cover_art_url(rg_id)
-            if not cover_url:
-                cover_url = MusicBrainzService.get_cover_art_url(mb_id)
+        # Try release group cover first
+        rg_id = result.get("release-group", {}).get("id")
+        if rg_id:
+            cover_url = MusicBrainzService.get_release_group_cover_art_url(rg_id)
+        if not cover_url:
+            cover_url = MusicBrainzService.get_cover_art_url(mb_id)
         
         candidates.append(MetadataMatchCandidate(
             musicbrainz_id=mb_id,
