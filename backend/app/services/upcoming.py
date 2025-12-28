@@ -214,29 +214,57 @@ class UpcomingReleasesService:
                         if not mbid:
                             continue
                         
-                        # Check if we already have this album
+                        release_title = release.get("title", "Unknown Album")
+                        
+                        # Check if we already have this album by musicbrainz_id
                         existing = self.db.query(Album).filter(
                             Album.musicbrainz_id == mbid
                         ).first()
                         
-                        if not existing:
-                            # Create new album as NOT owned and NOT wishlisted
-                            # This populates the "missing" albums
-                            new_album = Album(
-                                title=release.get("title", "Unknown Album"),
-                                musicbrainz_id=mbid,
-                                artist_id=artist.id,
-                                release_date=release.get("release_date"),
-                                release_type=release.get("release_type"),
-                                cover_art_url=release.get("cover_art_url"),
-                                is_owned=False,
-                                is_wishlisted=False,
-                                is_scanned=True
-                            )
-                            self.db.add(new_album)
-                            self.db.commit()
-                            total_added += 1
-                            logger.info(f"[FETCH] Added: {release.get('title')} by {artist.name}")
+                        if existing:
+                            continue
+                        
+                        # Also check by title similarity for this artist
+                        # (in case local album has different/no musicbrainz_id)
+                        artist_albums = self.db.query(Album).filter(
+                            Album.artist_id == artist.id
+                        ).all()
+                        
+                        title_match = False
+                        release_title_lower = release_title.lower().strip()
+                        for existing_album in artist_albums:
+                            existing_title_lower = existing_album.title.lower().strip()
+                            # Check for exact match or very close match
+                            if existing_title_lower == release_title_lower:
+                                title_match = True
+                                break
+                            # Also check without common suffixes like "(Deluxe)", "(Remaster)", etc.
+                            clean_existing = existing_title_lower.split('(')[0].strip()
+                            clean_release = release_title_lower.split('(')[0].strip()
+                            if clean_existing == clean_release and len(clean_existing) > 3:
+                                title_match = True
+                                break
+                        
+                        if title_match:
+                            continue
+                        
+                        # Create new album as NOT owned and NOT wishlisted
+                        # This populates the "missing" albums
+                        new_album = Album(
+                            title=release_title,
+                            musicbrainz_id=mbid,
+                            artist_id=artist.id,
+                            release_date=release.get("release_date"),
+                            release_type=release.get("release_type"),
+                            cover_art_url=release.get("cover_art_url"),
+                            is_owned=False,
+                            is_wishlisted=False,
+                            is_scanned=True
+                        )
+                        self.db.add(new_album)
+                        self.db.commit()
+                        total_added += 1
+                        logger.info(f"[FETCH] Added: {release_title} by {artist.name}")
                 
                 except Exception as e:
                     logger.error(f"[FETCH] Error fetching albums for {artist.name}: {e}")
