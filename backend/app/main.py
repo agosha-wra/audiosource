@@ -170,6 +170,17 @@ async def scheduled_scan_loop():
 @app.on_event("startup")
 async def startup_event():
     """Initialize scheduled scanning on startup."""
+    # Run database migrations for new columns
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # Add vinyl scrape progress columns if they don't exist
+        try:
+            conn.execute(text("ALTER TABLE vinyl_releases_scrape_status ADD COLUMN IF NOT EXISTS current_post INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE vinyl_releases_scrape_status ADD COLUMN IF NOT EXISTS total_posts INTEGER DEFAULT 0"))
+            conn.commit()
+        except Exception as e:
+            print(f"Migration note: {e}")
+    
     # Create default schedule if it doesn't exist
     db = SessionLocal()
     try:
