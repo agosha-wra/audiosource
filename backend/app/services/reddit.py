@@ -114,20 +114,21 @@ class RedditService:
         
         return None
     
-    def scrape_vinyl_releases(self, limit: int = 100) -> Dict[str, Any]:
+    def scrape_vinyl_releases(self, limit: int = 100, is_background: bool = False) -> Dict[str, Any]:
         """
         Scrape r/vinylreleases and match posts against library artists.
         
         Args:
             limit: Maximum number of posts to fetch
+            is_background: If True, skip the "already scraping" check (used by background tasks)
         
         Returns:
             Dict with scrape results
         """
         status = self.get_or_create_scrape_status()
         
-        # If already scraping, return current status
-        if status.status == "scraping":
+        # If already scraping (and not a background task continuation), return current status
+        if not is_background and status.status == "scraping":
             return {"status": "already_scraping", "message": "Scrape already in progress"}
         
         # Update status to scraping

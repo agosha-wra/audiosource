@@ -82,7 +82,7 @@ def run_vinyl_scrape_in_background():
     try:
         with _vinyl_lock:
             service = RedditService(db)
-            service.scrape_vinyl_releases()
+            service.scrape_vinyl_releases(is_background=True)
     finally:
         db.close()
 
@@ -1277,15 +1277,28 @@ def scrape_vinyl_releases(
     service = RedditService(db)
     status = service.get_or_create_scrape_status()
     
-    # If already scraping, return current status
+    # If already scraping, check if it's stuck (more than 5 minutes)
     if status.status == "scraping":
-        return status
+        if status.last_scrape_at:
+            stuck_threshold = timedelta(minutes=5)
+            if datetime.utcnow() - status.last_scrape_at > stuck_threshold:
+                # Reset stuck status
+                print(f"[VINYL] Resetting stuck scraping status (started {status.last_scrape_at})")
+                status.status = "idle"
+                status.error_message = "Previous scrape timed out"
+                db.commit()
+            else:
+                return status
+        else:
+            return status
     
-    # Mark as pending and start background scrape
+    # Mark as scraping and start background scrape
     status.status = "scraping"
+    status.last_scrape_at = datetime.utcnow()
     db.commit()
     db.refresh(status)
     
+    print(f"[VINYL] Starting background scrape...")
     background_tasks.add_task(run_vinyl_scrape_in_background)
     
     return status
