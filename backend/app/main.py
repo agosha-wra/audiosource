@@ -212,6 +212,9 @@ async def startup_event():
         try:
             conn.execute(text("ALTER TABLE vinyl_releases_scrape_status ADD COLUMN IF NOT EXISTS current_post INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE vinyl_releases_scrape_status ADD COLUMN IF NOT EXISTS total_posts INTEGER DEFAULT 0"))
+            # Add dismissed column to vinyl_releases and concerts
+            conn.execute(text("ALTER TABLE vinyl_releases ADD COLUMN IF NOT EXISTS dismissed BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE concerts ADD COLUMN IF NOT EXISTS dismissed BOOLEAN DEFAULT FALSE"))
             conn.commit()
         except Exception as e:
             print(f"Migration note: {e}")
@@ -1388,17 +1391,18 @@ def get_vinyl_releases_status(db: Session = Depends(get_db)):
 
 @app.delete("/api/vinyl-releases/{release_id}")
 def delete_vinyl_release(release_id: int, db: Session = Depends(get_db)):
-    """Delete a vinyl release from the list."""
+    """Dismiss a vinyl release (hide it and prevent re-adding)."""
     from app.models import VinylRelease
     
     release = db.query(VinylRelease).filter(VinylRelease.id == release_id).first()
     if not release:
         raise HTTPException(status_code=404, detail="Vinyl release not found")
     
-    db.delete(release)
+    # Mark as dismissed instead of deleting (prevents re-adding on next scrape)
+    release.dismissed = True
     db.commit()
     
-    return {"message": "Vinyl release deleted"}
+    return {"message": "Vinyl release dismissed"}
 
 
 # ============ Concert Endpoints ============
@@ -1479,17 +1483,18 @@ def get_concerts_status(db: Session = Depends(get_db)):
 
 @app.delete("/api/concerts/{concert_id}")
 def delete_concert(concert_id: int, db: Session = Depends(get_db)):
-    """Delete a concert from the list."""
+    """Dismiss a concert (hide it and prevent re-adding)."""
     from app.models import Concert
     
     concert = db.query(Concert).filter(Concert.id == concert_id).first()
     if not concert:
         raise HTTPException(status_code=404, detail="Concert not found")
     
-    db.delete(concert)
+    # Mark as dismissed instead of deleting (prevents re-adding on next scrape)
+    concert.dismissed = True
     db.commit()
     
-    return {"message": "Concert deleted"}
+    return {"message": "Concert dismissed"}
 
 
 # ============ Settings Endpoints ============

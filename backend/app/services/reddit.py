@@ -301,8 +301,10 @@ class RedditService:
         return posts
     
     def get_vinyl_releases(self, limit: int = 50, skip: int = 0) -> List[VinylRelease]:
-        """Get vinyl releases from the database, sorted by posted_at."""
-        return self.db.query(VinylRelease).order_by(
+        """Get vinyl releases from the database, sorted by posted_at (excluding dismissed)."""
+        return self.db.query(VinylRelease).filter(
+            VinylRelease.dismissed == False
+        ).order_by(
             VinylRelease.posted_at.desc().nullslast()
         ).offset(skip).limit(limit).all()
 

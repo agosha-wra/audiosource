@@ -348,9 +348,12 @@ class BandsintownService:
             return {"status": "error", "message": str(e)}
     
     def get_concerts(self, limit: int = 50, skip: int = 0, city_filter: str = None) -> List[Concert]:
-        """Get upcoming concerts, sorted by date, optionally filtered by city."""
+        """Get upcoming concerts, sorted by date, optionally filtered by city (excluding dismissed)."""
         now = datetime.utcnow()
-        query = self.db.query(Concert).filter(Concert.event_date >= now)
+        query = self.db.query(Concert).filter(
+            Concert.event_date >= now,
+            Concert.dismissed == False
+        )
         
         if city_filter:
             # Case-insensitive city matching

@@ -177,6 +177,9 @@ class VinylRelease(Base):
     matched_artist_id = Column(Integer, ForeignKey("artists.id"), nullable=True)
     matched_artist_name = Column(String(500), nullable=True)
     
+    # User dismissed this release (won't show in list, won't be re-added)
+    dismissed = Column(Boolean, default=False, index=True)
+    
     # Timestamps
     posted_at = Column(DateTime, nullable=True)
     scraped_at = Column(DateTime, default=datetime.utcnow)
@@ -225,6 +228,9 @@ class Concert(Base):
     # Additional info
     lineup = Column(Text, nullable=True)  # Other artists on the bill
     description = Column(Text, nullable=True)
+    
+    # User dismissed this concert (won't show in list, won't be re-added)
+    dismissed = Column(Boolean, default=False, index=True)
     
     # Timestamps
     scraped_at = Column(DateTime, default=datetime.utcnow)
