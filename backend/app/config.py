@@ -14,9 +14,6 @@ class Settings(BaseSettings):
     slskd_url: str = ""
     slskd_api_key: str = ""
     slskd_download_dir: str = "/downloads"
-    
-    # Bandsintown API key for concert data
-    bandsintown_api_key: str = ""
 
     class Config:
         env_file = ".env"

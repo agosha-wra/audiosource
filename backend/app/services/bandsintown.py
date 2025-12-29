@@ -8,18 +8,17 @@ from sqlalchemy.orm import Session
 from sqlalchemy import distinct
 
 from app.models import Artist, Album, Concert, ConcertScrapeStatus
-from app.config import get_settings
 
 
 class BandsintownService:
     """Service for fetching concerts from Bandsintown."""
     
     BASE_URL = "https://rest.bandsintown.com"
+    # Bandsintown's public API works with any app_id identifier
+    APP_ID = "audiosource"
     
     def __init__(self, db: Session):
         self.db = db
-        settings = get_settings()
-        self.api_key = getattr(settings, 'bandsintown_api_key', '')
     
     def get_or_create_scrape_status(self) -> ConcertScrapeStatus:
         """Get or create the scrape status record."""
@@ -45,17 +44,13 @@ class BandsintownService:
     
     def fetch_artist_events(self, artist_name: str) -> List[Dict[str, Any]]:
         """Fetch upcoming events for an artist from Bandsintown."""
-        if not self.api_key:
-            print("[CONCERTS] No Bandsintown API key configured")
-            return []
-        
         # URL encode the artist name
         import urllib.parse
         encoded_name = urllib.parse.quote(artist_name)
         
         url = f"{self.BASE_URL}/artists/{encoded_name}/events"
         params = {
-            "app_id": self.api_key,
+            "app_id": self.APP_ID,
             "date": "upcoming"
         }
         
@@ -85,12 +80,6 @@ class BandsintownService:
     def scrape_concerts(self) -> Dict[str, Any]:
         """Scrape concerts for all library artists."""
         status = self.get_or_create_scrape_status()
-        
-        if not self.api_key:
-            status.status = "error"
-            status.error_message = "No Bandsintown API key configured. Set BANDSINTOWN_API_KEY in environment."
-            self.db.commit()
-            return {"status": "error", "message": status.error_message}
         
         # Update status
         status.status = "scraping"
