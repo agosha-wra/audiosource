@@ -160,15 +160,21 @@ class RedditService:
             posts_found = len(posts)
             matches_found = 0
             
-            # Log the first few post titles and all artist names for debugging
+            # Update status with total posts count for progress display
+            status.total_posts = posts_found
+            status.current_post = 0
+            self.db.commit()
+            
+            # Log artist names for debugging
             print(f"[VINYL] Artist names being searched for ({len(artist_lookup)} total): {list(artist_lookup.keys())[:10]}...")
-            print(f"[VINYL] Sample post titles:")
-            for p in posts[:3]:
-                print(f"[VINYL]   - {p.get('title', '')[:80]}")
             
             for idx, post in enumerate(posts, 1):
-                if idx % 20 == 0 or idx == 1:
-                    print(f"[VINYL] Processing post {idx}/{len(posts)}...")
+                # Update progress in database for UI
+                status.current_post = idx
+                if idx % 10 == 0 or idx == 1:
+                    self.db.commit()
+                    print(f"[VINYL] Processing post {idx}/{posts_found}...")
+                
                 reddit_id = post.get("id")
                 if not reddit_id:
                     continue

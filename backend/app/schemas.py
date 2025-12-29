@@ -278,6 +278,8 @@ class VinylReleasesScrapeStatusResponse(BaseModel):
     last_scrape_at: Optional[datetime] = None
     posts_found: int
     matches_found: int
+    current_post: int = 0
+    total_posts: int = 0
     error_message: Optional[str] = None
 
     class Config:

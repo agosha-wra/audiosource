@@ -194,5 +194,7 @@ export interface VinylReleasesScrapeStatus {
   last_scrape_at: string | null;
   posts_found: number;
   matches_found: number;
+  current_post: number;
+  total_posts: number;
   error_message: string | null;
 }

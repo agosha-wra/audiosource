@@ -106,7 +106,11 @@ export default function VinylReleasesView() {
             {scraping ? (
               <>
                 <div className="btn-spinner-small" />
-                <span>Scraping...</span>
+                <span>
+                  {status && status.total_posts > 0 
+                    ? `Scraping ${status.current_post}/${status.total_posts}...`
+                    : 'Scraping...'}
+                </span>
               </>
             ) : (
               <>

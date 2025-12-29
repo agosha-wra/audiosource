@@ -195,4 +195,6 @@ class VinylReleasesScrapeStatus(Base):
     last_scrape_at = Column(DateTime, nullable=True)
     posts_found = Column(Integer, default=0)
     matches_found = Column(Integer, default=0)
+    current_post = Column(Integer, default=0)  # Progress: current post being processed
+    total_posts = Column(Integer, default=0)   # Progress: total posts to process
     error_message = Column(Text, nullable=True)
