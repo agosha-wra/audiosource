@@ -219,3 +219,17 @@ export async function getConcertStatus(): Promise<ConcertScrapeStatus> {
 export async function deleteConcert(concertId: number): Promise<void> {
   await fetchApi(`/concerts/${concertId}`, { method: 'DELETE' });
 }
+
+// User Settings
+import type { UserSettings } from './types';
+
+export async function getUserSettings(): Promise<UserSettings> {
+  return fetchApi<UserSettings>('/user-settings');
+}
+
+export async function updateUserSettings(settings: { concert_city?: string | null }): Promise<UserSettings> {
+  return fetchApi<UserSettings>('/user-settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings)
+  });
+}

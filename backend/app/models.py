@@ -246,3 +246,13 @@ class ConcertScrapeStatus(Base):
     concerts_found = Column(Integer, default=0)
     current_artist = Column(Integer, default=0)  # Progress tracking
     error_message = Column(Text, nullable=True)
+
+
+class UserSettings(Base):
+    """User-configurable settings stored in the database."""
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    concert_city = Column(String(200), nullable=True)  # Filter concerts by this city
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

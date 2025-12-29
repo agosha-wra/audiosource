@@ -1413,9 +1413,15 @@ def get_concerts(
     limit: int = 50,
     db: Session = Depends(get_db)
 ):
-    """Get upcoming concerts for library artists."""
+    """Get upcoming concerts for library artists, filtered by user's city preference."""
+    from app.models import UserSettings
+    
+    # Get city filter from user settings
+    user_settings = db.query(UserSettings).first()
+    city_filter = user_settings.concert_city if user_settings else None
+    
     service = BandsintownService(db)
-    return service.get_concerts(limit=limit, skip=skip)
+    return service.get_concerts(limit=limit, skip=skip, city_filter=city_filter)
 
 
 @app.post("/api/concerts/scrape", response_model=ConcertScrapeStatusResponse)
@@ -1487,6 +1493,45 @@ def delete_concert(concert_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": "Concert deleted"}
+
+
+# ============ User Settings Endpoints ============
+
+from app.models import UserSettings
+from app.schemas import UserSettingsResponse, UserSettingsUpdate
+
+
+def get_or_create_user_settings(db: Session) -> UserSettings:
+    """Get or create user settings."""
+    settings = db.query(UserSettings).first()
+    if not settings:
+        settings = UserSettings()
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@app.get("/api/user-settings", response_model=UserSettingsResponse)
+def get_user_settings(db: Session = Depends(get_db)):
+    """Get user settings."""
+    return get_or_create_user_settings(db)
+
+
+@app.put("/api/user-settings", response_model=UserSettingsResponse)
+def update_user_settings(
+    settings_update: UserSettingsUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update user settings."""
+    settings = get_or_create_user_settings(db)
+    
+    if settings_update.concert_city is not None:
+        settings.concert_city = settings_update.concert_city.strip() if settings_update.concert_city else None
+    
+    db.commit()
+    db.refresh(settings)
+    return settings
 
 
 # ============ Settings Endpoints ============

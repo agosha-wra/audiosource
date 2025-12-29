@@ -226,3 +226,8 @@ export interface ConcertScrapeStatus {
   current_artist: number;
   error_message: string | null;
 }
+
+export interface UserSettings {
+  id: number;
+  concert_city: string | null;
+}

@@ -318,3 +318,15 @@ class ConcertScrapeStatusResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserSettingsResponse(BaseModel):
+    id: int
+    concert_city: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserSettingsUpdate(BaseModel):
+    concert_city: Optional[str] = None

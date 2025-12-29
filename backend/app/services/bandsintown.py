@@ -273,17 +273,20 @@ class BandsintownService:
             self.db.commit()
             return {"status": "error", "message": str(e)}
     
-    def get_concerts(self, limit: int = 50, skip: int = 0) -> List[Concert]:
-        """Get upcoming concerts, sorted by date."""
+    def get_concerts(self, limit: int = 50, skip: int = 0, city_filter: str = None) -> List[Concert]:
+        """Get upcoming concerts, sorted by date, optionally filtered by city."""
         now = datetime.utcnow()
-        return (
-            self.db.query(Concert)
-            .filter(Concert.event_date >= now)
-            .order_by(Concert.event_date.asc())
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        query = self.db.query(Concert).filter(Concert.event_date >= now)
+        
+        if city_filter:
+            # Case-insensitive city matching
+            city_lower = city_filter.lower()
+            query = query.filter(
+                Concert.venue_city.ilike(f"%{city_lower}%") |
+                Concert.venue_country.ilike(f"%{city_lower}%")
+            )
+        
+        return query.order_by(Concert.event_date.asc()).offset(skip).limit(limit).all()
     
     def delete_past_concerts(self) -> int:
         """Delete concerts that have already happened."""
