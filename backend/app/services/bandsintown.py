@@ -47,10 +47,7 @@ class BandsintownService:
     
     def fetch_artist_events(self, artist_name: str) -> List[Dict[str, Any]]:
         """Fetch upcoming events for an artist by scraping Songkick."""
-        # Create URL-friendly artist name
         import urllib.parse
-        slug = re.sub(r'[^\w\s-]', '', artist_name.lower())
-        slug = re.sub(r'[\s]+', '-', slug)
         
         # First, search for the artist to get their Songkick URL
         search_url = f"{self.BASE_URL}/search?query={urllib.parse.quote(artist_name)}&type=artists"
@@ -63,8 +60,12 @@ class BandsintownService:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Find the first artist result
-            artist_link = soup.select_one('.artist a[href*="/artists/"]')
+            # Find the first artist result in the search component
+            search_component = soup.select_one('.component.search')
+            if not search_component:
+                return []
+            
+            artist_link = search_component.select_one('a[href*="/artists/"]')
             if not artist_link:
                 return []
             
@@ -72,19 +73,18 @@ class BandsintownService:
             if not artist_url.startswith('http'):
                 artist_url = f"{self.BASE_URL}{artist_url}"
             
-            # Add /calendar to get upcoming events
-            calendar_url = f"{artist_url}/calendar"
-            
             # Fetch the artist's calendar page
+            calendar_url = f"{artist_url}/calendar"
             response = self.scraper.get(calendar_url, timeout=30)
             if response.status_code != 200:
                 return []
             
             soup = BeautifulSoup(response.text, 'html.parser')
             events = []
+            now = datetime.utcnow()
             
             # Parse event listings
-            event_elements = soup.select('.event-listings li.event')
+            event_elements = soup.select('.event-listings li.event-listing')
             
             for event_el in event_elements[:20]:  # Limit to 20 events per artist
                 try:
@@ -103,31 +103,40 @@ class BandsintownService:
                     if not event_id:
                         continue
                     
-                    # Get date
+                    # Get date from time element
                     date_el = event_el.select_one('time')
                     event_date = None
                     if date_el:
                         datetime_str = date_el.get('datetime')
                         if datetime_str:
                             try:
+                                # Parse the datetime string
                                 event_date = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+                                # Remove timezone for comparison
+                                event_date = event_date.replace(tzinfo=None)
                             except:
                                 pass
                     
                     if not event_date:
                         continue
                     
-                    # Get venue info
-                    venue_el = event_el.select_one('.venue-name, .location')
-                    venue_name = venue_el.get_text(strip=True) if venue_el else None
+                    # Only include future events
+                    if event_date < now:
+                        continue
                     
-                    location_el = event_el.select_one('.venue-location, .location-name')
-                    location = location_el.get_text(strip=True) if location_el else ""
+                    # Get venue and location from the event text
+                    event_text = event_el.get_text(strip=True)
+                    # Text format: "Dec16Copenhagen, DenmarkRoyal Arena"
+                    # Try to extract location
+                    location_parts = []
+                    for part in event_text.split(','):
+                        part = re.sub(r'^[A-Za-z]{3}\d+', '', part).strip()
+                        if part:
+                            location_parts.append(part)
                     
-                    # Parse location into city/country
-                    location_parts = [p.strip() for p in location.split(',')]
                     city = location_parts[0] if len(location_parts) > 0 else None
-                    country = location_parts[-1] if len(location_parts) > 1 else None
+                    country = location_parts[1].split()[0] if len(location_parts) > 1 else None
+                    venue_name = location_parts[-1] if len(location_parts) > 1 else None
                     
                     events.append({
                         'id': f"sk-{event_id}",

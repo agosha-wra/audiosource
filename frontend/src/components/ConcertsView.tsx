@@ -2,16 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Concert, ConcertScrapeStatus } from '../types';
 import { getConcerts, scrapeConcerts, getConcertStatus, deleteConcert } from '../api';
 
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
-}
-
 function formatTimeAgo(dateString: string | null): string {
   if (!dateString) return '';
   
