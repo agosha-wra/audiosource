@@ -161,12 +161,14 @@ class RedditService:
             matches_found = 0
             
             # Log the first few post titles and all artist names for debugging
-            print(f"[VINYL] Artist names being searched for: {list(artist_lookup.keys())[:20]}")
+            print(f"[VINYL] Artist names being searched for ({len(artist_lookup)} total): {list(artist_lookup.keys())[:10]}...")
             print(f"[VINYL] Sample post titles:")
-            for p in posts[:5]:
+            for p in posts[:3]:
                 print(f"[VINYL]   - {p.get('title', '')[:80]}")
             
-            for post in posts:
+            for idx, post in enumerate(posts, 1):
+                if idx % 20 == 0 or idx == 1:
+                    print(f"[VINYL] Processing post {idx}/{len(posts)}...")
                 reddit_id = post.get("id")
                 if not reddit_id:
                     continue
