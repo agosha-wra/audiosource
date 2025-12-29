@@ -52,27 +52,23 @@ export default function VinylReleasesView() {
     fetchStatus();
   }, [fetchReleases, fetchStatus]);
 
-  // Poll while scraping
-  useEffect(() => {
-    if (!scraping) return;
-
-    const interval = setInterval(async () => {
-      const newStatus = await fetchStatus();
-      if (newStatus && (newStatus.status === 'completed' || newStatus.status === 'error' || newStatus.status === 'idle')) {
-        setScraping(false);
-        fetchReleases();
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [scraping, fetchStatus, fetchReleases]);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
 
   const handleScrape = async () => {
+    setScraping(true);
+    setScrapeError(null);
     try {
-      setScraping(true);
+      // This now runs synchronously - response comes when scrape is complete
       await scrapeVinylReleases();
-    } catch (error) {
-      console.error('Error starting scrape:', error);
+      // Refresh data after successful scrape
+      await fetchStatus();
+      await fetchReleases();
+    } catch (error: any) {
+      console.error('Scrape error:', error);
+      const errorMsg = error?.message || error?.detail || 'Scrape failed - check server logs';
+      setScrapeError(errorMsg);
+      await fetchStatus();  // Refresh status to show error state
+    } finally {
       setScraping(false);
     }
   };
@@ -126,6 +122,18 @@ export default function VinylReleasesView() {
       </header>
 
       <div className="content">
+        {scrapeError && (
+          <div className="vinyl-error-bar">
+            <span>⚠️ {scrapeError}</span>
+          </div>
+        )}
+
+        {status?.error_message && !scrapeError && (
+          <div className="vinyl-error-bar">
+            <span>⚠️ Last scrape error: {status.error_message}</span>
+          </div>
+        )}
+
         {status?.last_scrape_at && (
           <div className="vinyl-status-bar">
             <span>Last scraped: {formatTimeAgo(status.last_scrape_at)}</span>
@@ -218,6 +226,16 @@ export default function VinylReleasesView() {
       </div>
 
       <style>{`
+        .vinyl-error-bar {
+          background: rgba(239, 68, 68, 0.15);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+          padding: 12px 16px;
+          border-radius: var(--radius-md);
+          margin-bottom: 12px;
+          font-size: 13px;
+          color: #ef4444;
+        }
+
         .vinyl-status-bar {
           background: var(--bg-tertiary);
           padding: 12px 16px;

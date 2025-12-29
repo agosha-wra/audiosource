@@ -1289,11 +1289,8 @@ def get_vinyl_releases(
 
 
 @app.post("/api/vinyl-releases/scrape", response_model=VinylReleasesScrapeStatusResponse)
-def scrape_vinyl_releases(
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """Start scraping r/vinylreleases for matching posts."""
+def scrape_vinyl_releases(db: Session = Depends(get_db)):
+    """Scrape r/vinylreleases for matching posts (runs synchronously)."""
     service = RedditService(db)
     status = service.get_or_create_scrape_status()
     
@@ -1312,16 +1309,34 @@ def scrape_vinyl_releases(
         else:
             return status
     
-    # Mark as scraping and start background scrape
-    status.status = "scraping"
-    status.last_scrape_at = datetime.utcnow()
-    db.commit()
-    db.refresh(status)
-    
-    print(f"[VINYL] Starting background scrape...")
-    background_tasks.add_task(run_vinyl_scrape_in_background)
-    
-    return status
+    # Run scrape synchronously so errors are returned to the client
+    print(f"[VINYL] Starting synchronous scrape...")
+    try:
+        result = service.scrape_vinyl_releases(is_background=True)
+        print(f"[VINYL] Scrape result: {result}")
+        
+        # Refresh status after scrape
+        db.refresh(status)
+        
+        # If there was an error in the result, raise it
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("message", "Scrape failed"))
+        
+        return status
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_msg = f"Scrape failed: {str(e)}"
+        print(f"[VINYL] {error_msg}")
+        print(f"[VINYL] Traceback: {traceback.format_exc()}")
+        
+        # Update status to error
+        status.status = "error"
+        status.error_message = error_msg
+        db.commit()
+        
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.get("/api/vinyl-releases/status", response_model=VinylReleasesScrapeStatusResponse)
