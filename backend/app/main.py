@@ -1516,7 +1516,8 @@ def get_app_settings():
             url=settings.slskd_url,
             download_dir=settings.slskd_download_dir,
             api_key_set=bool(settings.slskd_api_key)
-        )
+        ),
+        concert_city=settings.concert_city
     )
 
 

@@ -248,6 +248,7 @@ class AppSettingsResponse(BaseModel):
     music_folder: str
     database_url: str
     slskd: SlskdSettingsResponse
+    concert_city: Optional[str] = None
 
 
 # ============ Vinyl Releases Schemas ============

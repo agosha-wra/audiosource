@@ -99,11 +99,7 @@ export default function ConcertsView() {
             {scraping ? (
               <>
                 <div className="btn-spinner-small" />
-                <span>
-                  {status && status.total_artists > 0 
-                    ? `Checking ${status.current_artist}/${status.total_artists}...`
-                    : 'Checking...'}
-                </span>
+                <span>Searching concerts...</span>
               </>
             ) : (
               <>
@@ -134,8 +130,8 @@ export default function ConcertsView() {
         {status?.last_scrape_at && (
           <div className="concert-status-bar">
             <span>Last checked: {formatTimeAgo(status.last_scrape_at)}</span>
-            {status.artists_checked > 0 && (
-              <span> • Checked {status.artists_checked} artists, found {status.concerts_found} concerts</span>
+            {status.concerts_found !== undefined && (
+              <span> • Found {status.concerts_found} matching concerts</span>
             )}
             <span className="auto-note"> • Auto-checks daily</span>
           </div>
@@ -151,7 +147,10 @@ export default function ConcertsView() {
               <path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/>
             </svg>
             <h2>No upcoming concerts found</h2>
-            <p>Click "Check Now" to search Bandsintown for concerts from your library artists.</p>
+            <p>Click "Check Now" to search for concerts in your city that match your library artists.</p>
+            <p style={{ fontSize: '12px', marginTop: '8px', color: 'var(--text-muted)' }}>
+              Set CONCERT_CITY in your environment to configure the city.
+            </p>
           </div>
         ) : (
           <div className="concerts-list">
