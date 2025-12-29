@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     slskd_download_dir: str = "/downloads"
     
     # Concert city filter (only show concerts in this city/country)
-    concert_city: str = ""
+    concert_city: str = "Paris"
 
     class Config:
         env_file = ".env"
