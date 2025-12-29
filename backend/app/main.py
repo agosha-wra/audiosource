@@ -1294,7 +1294,7 @@ def scrape_vinyl_releases(db: Session = Depends(get_db)):
     service = RedditService(db)
     status = service.get_or_create_scrape_status()
     
-    # If already scraping, check if it's stuck (more than 5 minutes)
+    # If already scraping, check if it's stuck (more than 5 minutes or no timestamp)
     if status.status == "scraping":
         if status.last_scrape_at:
             stuck_threshold = timedelta(minutes=5)
@@ -1305,9 +1305,14 @@ def scrape_vinyl_releases(db: Session = Depends(get_db)):
                 status.error_message = "Previous scrape timed out"
                 db.commit()
             else:
+                # Still actively scraping
                 return status
         else:
-            return status
+            # No timestamp means it's from a broken previous run - reset it
+            print(f"[VINYL] Resetting scraping status with no timestamp (broken previous run)")
+            status.status = "idle"
+            status.error_message = None
+            db.commit()
     
     # Run scrape synchronously so errors are returned to the client
     print(f"[VINYL] Starting synchronous scrape...")
