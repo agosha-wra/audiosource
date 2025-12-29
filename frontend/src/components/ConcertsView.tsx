@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Concert, ConcertScrapeStatus } from '../types';
-import { getConcerts, scrapeConcerts, getConcertStatus, deleteConcert, getUserSettings, updateUserSettings } from '../api';
+import { getConcerts, scrapeConcerts, getConcertStatus, deleteConcert } from '../api';
 
 function formatTimeAgo(dateString: string | null): string {
   if (!dateString) return '';
@@ -25,9 +25,6 @@ export default function ConcertsView() {
   const [status, setStatus] = useState<ConcertScrapeStatus | null>(null);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Set<number>>(new Set());
-  const [cityFilter, setCityFilter] = useState('');
-  const [cityInputValue, setCityInputValue] = useState('');
-  const [savingCity, setSavingCity] = useState(false);
 
   const fetchConcerts = useCallback(async () => {
     try {
@@ -51,34 +48,10 @@ export default function ConcertsView() {
     }
   }, []);
 
-  const fetchUserSettings = useCallback(async () => {
-    try {
-      const settings = await getUserSettings();
-      setCityFilter(settings.concert_city || '');
-      setCityInputValue(settings.concert_city || '');
-    } catch (error) {
-      console.error('Error fetching user settings:', error);
-    }
-  }, []);
-
   useEffect(() => {
     fetchConcerts();
     fetchStatus();
-    fetchUserSettings();
-  }, [fetchConcerts, fetchStatus, fetchUserSettings]);
-
-  const handleSaveCity = async () => {
-    setSavingCity(true);
-    try {
-      await updateUserSettings({ concert_city: cityInputValue || null });
-      setCityFilter(cityInputValue);
-      await fetchConcerts(); // Refresh with new filter
-    } catch (error) {
-      console.error('Error saving city:', error);
-    } finally {
-      setSavingCity(false);
-    }
-  };
+  }, [fetchConcerts, fetchStatus]);
 
   const handleScrape = async () => {
     setScraping(true);
@@ -118,22 +91,6 @@ export default function ConcertsView() {
       <header className="header">
         <h1>Upcoming Concerts</h1>
         <div className="header-controls">
-          <div className="city-filter">
-            <input
-              type="text"
-              placeholder="Filter by city/country..."
-              value={cityInputValue}
-              onChange={(e) => setCityInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSaveCity()}
-            />
-            <button
-              className="city-save-btn"
-              onClick={handleSaveCity}
-              disabled={savingCity || cityInputValue === cityFilter}
-            >
-              {savingCity ? '...' : 'Apply'}
-            </button>
-          </div>
           <button 
             className="scrape-btn"
             onClick={handleScrape}
@@ -427,51 +384,6 @@ export default function ConcertsView() {
         .concert-delete-btn svg {
           width: 14px;
           height: 14px;
-        }
-
-        .city-filter {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .city-filter input {
-          padding: 8px 12px;
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-md);
-          background: var(--bg-secondary);
-          color: var(--text-primary);
-          font-size: 13px;
-          width: 200px;
-        }
-
-        .city-filter input:focus {
-          outline: none;
-          border-color: var(--accent);
-        }
-
-        .city-filter input::placeholder {
-          color: var(--text-muted);
-        }
-
-        .city-save-btn {
-          padding: 8px 12px;
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border-color);
-          color: var(--text-primary);
-          border-radius: var(--radius-md);
-          font-size: 13px;
-          cursor: pointer;
-          transition: all var(--transition);
-        }
-
-        .city-save-btn:hover:not(:disabled) {
-          background: var(--bg-hover);
-        }
-
-        .city-save-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
         }
 
         .scrape-btn {
