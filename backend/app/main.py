@@ -72,6 +72,21 @@ def run_scan_in_background(force_rescan: bool):
         db.close()
 
 
+# Forward declare vinyl scrape function (defined later, used in scheduler)
+_vinyl_lock = threading.Lock()
+
+def run_vinyl_scrape_in_background():
+    """Run the vinyl releases scrape in a background thread."""
+    from app.services.reddit import RedditService
+    db = SessionLocal()
+    try:
+        with _vinyl_lock:
+            service = RedditService(db)
+            service.scrape_vinyl_releases()
+    finally:
+        db.close()
+
+
 async def scheduled_scan_loop():
     """Background loop that checks for scheduled scans and upcoming releases."""
     global _scheduler_running
@@ -114,6 +129,19 @@ async def scheduled_scan_loop():
                     if should_check and upcoming_status.status != "scanning":
                         print(f"Starting scheduled upcoming releases check at {now}")
                         thread = threading.Thread(target=run_upcoming_check_in_background)
+                        thread.start()
+                
+                # Check for vinyl releases hourly
+                from app.models import VinylReleasesScrapeStatus
+                vinyl_status = db.query(VinylReleasesScrapeStatus).first()
+                if vinyl_status:
+                    should_scrape = (
+                        vinyl_status.last_scrape_at is None or
+                        (now - vinyl_status.last_scrape_at) > timedelta(hours=1)
+                    )
+                    if should_scrape and vinyl_status.status != "scraping":
+                        print(f"Starting scheduled vinyl releases scrape at {now}")
+                        thread = threading.Thread(target=run_vinyl_scrape_in_background)
                         thread.start()
                 
                 # Check for timed out downloads (every minute)
@@ -1216,6 +1244,73 @@ def delete_download(download_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": "Download deleted"}
+
+
+# ============ Vinyl Releases Endpoints ============
+
+from app.services.reddit import RedditService
+from app.schemas import VinylReleaseResponse, VinylReleasesScrapeStatusResponse
+
+
+@app.get("/api/vinyl-releases", response_model=List[VinylReleaseResponse])
+def get_vinyl_releases(
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get vinyl releases that match library artists."""
+    from app.models import VinylRelease
+    
+    releases = db.query(VinylRelease).order_by(
+        VinylRelease.posted_at.desc().nullslast()
+    ).offset(skip).limit(limit).all()
+    
+    return releases
+
+
+@app.post("/api/vinyl-releases/scrape", response_model=VinylReleasesScrapeStatusResponse)
+def scrape_vinyl_releases(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Start scraping r/vinylreleases for matching posts."""
+    service = RedditService(db)
+    status = service.get_or_create_scrape_status()
+    
+    # If already scraping, return current status
+    if status.status == "scraping":
+        return status
+    
+    # Mark as pending and start background scrape
+    status.status = "scraping"
+    db.commit()
+    db.refresh(status)
+    
+    background_tasks.add_task(run_vinyl_scrape_in_background)
+    
+    return status
+
+
+@app.get("/api/vinyl-releases/status", response_model=VinylReleasesScrapeStatusResponse)
+def get_vinyl_releases_status(db: Session = Depends(get_db)):
+    """Get the current vinyl releases scrape status."""
+    service = RedditService(db)
+    return service.get_or_create_scrape_status()
+
+
+@app.delete("/api/vinyl-releases/{release_id}")
+def delete_vinyl_release(release_id: int, db: Session = Depends(get_db)):
+    """Delete a vinyl release from the list."""
+    from app.models import VinylRelease
+    
+    release = db.query(VinylRelease).filter(VinylRelease.id == release_id).first()
+    if not release:
+        raise HTTPException(status_code=404, detail="Vinyl release not found")
+    
+    db.delete(release)
+    db.commit()
+    
+    return {"message": "Vinyl release deleted"}
 
 
 # ============ Settings Endpoints ============

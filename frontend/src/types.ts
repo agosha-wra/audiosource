@@ -146,7 +146,7 @@ export interface SlskdStatus {
   url: string | null;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'settings';
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'vinyl-releases' | 'settings';
 
 export interface MetadataMatchCandidate {
   musicbrainz_id: string;
@@ -169,4 +169,30 @@ export interface AppSettings {
     download_dir: string | null;
     api_key_set: boolean;
   };
+}
+
+export interface VinylRelease {
+  id: number;
+  reddit_id: string;
+  title: string;
+  url: string;
+  author: string | null;
+  score: number;
+  num_comments: number;
+  flair: string | null;
+  thumbnail: string | null;
+  matched_artist_id: number | null;
+  matched_artist_name: string | null;
+  posted_at: string | null;
+  scraped_at: string;
+  created_at: string;
+}
+
+export interface VinylReleasesScrapeStatus {
+  id: number;
+  status: 'idle' | 'scraping' | 'completed' | 'error';
+  last_scrape_at: string | null;
+  posts_found: number;
+  matches_found: number;
+  error_message: string | null;
 }

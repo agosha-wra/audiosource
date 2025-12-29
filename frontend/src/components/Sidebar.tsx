@@ -102,6 +102,18 @@ export default function Sidebar({
         </a>
         <a
           href="#"
+          className={`nav-item ${currentView === 'vinyl-releases' ? 'active' : ''}`}
+          onClick={(e) => { e.preventDefault(); onNavigate('vinyl-releases'); }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="12" r="3"/>
+            <circle cx="12" cy="12" r="6"/>
+          </svg>
+          <span>Vinyl Releases</span>
+        </a>
+        <a
+          href="#"
           className={`nav-item ${currentView === 'settings' ? 'active' : ''}`}
           onClick={(e) => { e.preventDefault(); onNavigate('settings'); }}
         >

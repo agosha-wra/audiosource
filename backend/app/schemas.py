@@ -248,3 +248,37 @@ class AppSettingsResponse(BaseModel):
     music_folder: str
     database_url: str
     slskd: SlskdSettingsResponse
+
+
+# ============ Vinyl Releases Schemas ============
+
+class VinylReleaseResponse(BaseModel):
+    id: int
+    reddit_id: str
+    title: str
+    url: str
+    author: Optional[str] = None
+    score: int
+    num_comments: int
+    flair: Optional[str] = None
+    thumbnail: Optional[str] = None
+    matched_artist_id: Optional[int] = None
+    matched_artist_name: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    scraped_at: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class VinylReleasesScrapeStatusResponse(BaseModel):
+    id: int
+    status: str
+    last_scrape_at: Optional[datetime] = None
+    posts_found: int
+    matches_found: int
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True

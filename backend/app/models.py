@@ -157,3 +157,42 @@ class Download(Base):
     
     # Relationship
     album = relationship("Album")
+
+
+class VinylRelease(Base):
+    """Vinyl releases from r/vinylreleases that match library artists."""
+    __tablename__ = "vinyl_releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reddit_id = Column(String(50), unique=True, nullable=False, index=True)
+    title = Column(Text, nullable=False)
+    url = Column(Text, nullable=False)
+    author = Column(String(100), nullable=True)
+    score = Column(Integer, default=0)
+    num_comments = Column(Integer, default=0)
+    flair = Column(String(100), nullable=True)
+    thumbnail = Column(Text, nullable=True)
+    
+    # Matched artist info
+    matched_artist_id = Column(Integer, ForeignKey("artists.id"), nullable=True)
+    matched_artist_name = Column(String(500), nullable=True)
+    
+    # Timestamps
+    posted_at = Column(DateTime, nullable=True)
+    scraped_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    matched_artist = relationship("Artist")
+
+
+class VinylReleasesScrapeStatus(Base):
+    """Status of the Reddit vinyl releases scraping."""
+    __tablename__ = "vinyl_releases_scrape_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), default="idle")  # idle, scraping, completed, error
+    last_scrape_at = Column(DateTime, nullable=True)
+    posts_found = Column(Integer, default=0)
+    matches_found = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)

@@ -8,6 +8,7 @@ import ArtistDetailView from './components/ArtistDetailView';
 import WishlistView from './components/WishlistView';
 import NewReleasesView from './components/NewReleasesView';
 import DownloadsView from './components/DownloadsView';
+import VinylReleasesView from './components/VinylReleasesView';
 import SettingsView from './components/SettingsView';
 import AlbumModal from './components/AlbumModal';
 import SearchModal from './components/SearchModal';
@@ -35,6 +36,8 @@ function getStateFromURL(): { view: View; artistId: number | null; year?: number
     view = 'new-releases';
   } else if (path === '/downloads') {
     view = 'downloads';
+  } else if (path === '/vinyl-releases') {
+    view = 'vinyl-releases';
   } else if (path === '/settings') {
     view = 'settings';
   } else {
@@ -73,6 +76,9 @@ function updateURL(view: View, artistId?: number | null, year?: number, week?: n
       break;
     case 'downloads':
       path = '/downloads';
+      break;
+    case 'vinyl-releases':
+      path = '/vinyl-releases';
       break;
     case 'settings':
       path = '/settings';
@@ -303,6 +309,10 @@ function App() {
 
         {currentView === 'downloads' && (
           <DownloadsView />
+        )}
+
+        {currentView === 'vinyl-releases' && (
+          <VinylReleasesView />
         )}
 
         {currentView === 'settings' && (

@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus } from './types';
 
 const API_BASE = '/api';
 
@@ -182,4 +182,21 @@ export async function applyMetadata(albumId: number, musicbrainzId: string): Pro
 // Settings
 export async function getAppSettings(): Promise<AppSettings> {
   return fetchApi<AppSettings>('/settings');
+}
+
+// Vinyl Releases
+export async function getVinylReleases(skip = 0, limit = 50): Promise<VinylRelease[]> {
+  return fetchApi<VinylRelease[]>(`/vinyl-releases?skip=${skip}&limit=${limit}`);
+}
+
+export async function scrapeVinylReleases(): Promise<VinylReleasesScrapeStatus> {
+  return fetchApi<VinylReleasesScrapeStatus>('/vinyl-releases/scrape', { method: 'POST' });
+}
+
+export async function getVinylReleasesStatus(): Promise<VinylReleasesScrapeStatus> {
+  return fetchApi<VinylReleasesScrapeStatus>('/vinyl-releases/status');
+}
+
+export async function deleteVinylRelease(releaseId: number): Promise<void> {
+  await fetchApi(`/vinyl-releases/${releaseId}`, { method: 'DELETE' });
 }
