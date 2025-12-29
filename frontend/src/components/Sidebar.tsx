@@ -114,6 +114,18 @@ export default function Sidebar({
         </a>
         <a
           href="#"
+          className={`nav-item ${currentView === 'concerts' ? 'active' : ''}`}
+          onClick={(e) => { e.preventDefault(); onNavigate('concerts'); }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 18V5l12-3v13"/>
+            <circle cx="6" cy="18" r="3"/>
+            <circle cx="18" cy="15" r="3"/>
+          </svg>
+          <span>Concerts</span>
+        </a>
+        <a
+          href="#"
           className={`nav-item ${currentView === 'settings' ? 'active' : ''}`}
           onClick={(e) => { e.preventDefault(); onNavigate('settings'); }}
         >

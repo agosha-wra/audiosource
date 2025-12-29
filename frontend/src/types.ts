@@ -146,7 +146,7 @@ export interface SlskdStatus {
   url: string | null;
 }
 
-export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'vinyl-releases' | 'settings';
+export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'vinyl-releases' | 'concerts' | 'settings';
 
 export interface MetadataMatchCandidate {
   musicbrainz_id: string;
@@ -196,5 +196,33 @@ export interface VinylReleasesScrapeStatus {
   matches_found: number;
   current_post: number;
   total_posts: number;
+  error_message: string | null;
+}
+
+export interface Concert {
+  id: number;
+  bandsintown_id: string;
+  artist_id: number | null;
+  artist_name: string;
+  event_date: string;
+  venue_name: string | null;
+  venue_city: string | null;
+  venue_region: string | null;
+  venue_country: string | null;
+  ticket_url: string | null;
+  event_url: string | null;
+  lineup: string | null;
+  description: string | null;
+  scraped_at: string;
+}
+
+export interface ConcertScrapeStatus {
+  id: number;
+  status: 'idle' | 'scraping' | 'completed' | 'error';
+  last_scrape_at: string | null;
+  artists_checked: number;
+  total_artists: number;
+  concerts_found: number;
+  current_artist: number;
   error_message: string | null;
 }

@@ -200,3 +200,22 @@ export async function getVinylReleasesStatus(): Promise<VinylReleasesScrapeStatu
 export async function deleteVinylRelease(releaseId: number): Promise<void> {
   await fetchApi(`/vinyl-releases/${releaseId}`, { method: 'DELETE' });
 }
+
+// Concerts
+import type { Concert, ConcertScrapeStatus } from './types';
+
+export async function getConcerts(skip = 0, limit = 50): Promise<Concert[]> {
+  return fetchApi<Concert[]>(`/concerts?skip=${skip}&limit=${limit}`);
+}
+
+export async function scrapeConcerts(): Promise<ConcertScrapeStatus> {
+  return fetchApi<ConcertScrapeStatus>('/concerts/scrape', { method: 'POST' });
+}
+
+export async function getConcertStatus(): Promise<ConcertScrapeStatus> {
+  return fetchApi<ConcertScrapeStatus>('/concerts/status');
+}
+
+export async function deleteConcert(concertId: number): Promise<void> {
+  await fetchApi(`/concerts/${concertId}`, { method: 'DELETE' });
+}

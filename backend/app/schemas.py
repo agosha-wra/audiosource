@@ -284,3 +284,37 @@ class VinylReleasesScrapeStatusResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ConcertResponse(BaseModel):
+    id: int
+    bandsintown_id: str
+    artist_id: Optional[int] = None
+    artist_name: str
+    event_date: datetime
+    venue_name: Optional[str] = None
+    venue_city: Optional[str] = None
+    venue_region: Optional[str] = None
+    venue_country: Optional[str] = None
+    ticket_url: Optional[str] = None
+    event_url: Optional[str] = None
+    lineup: Optional[str] = None
+    description: Optional[str] = None
+    scraped_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class ConcertScrapeStatusResponse(BaseModel):
+    id: int
+    status: str
+    last_scrape_at: Optional[datetime] = None
+    artists_checked: int = 0
+    total_artists: int = 0
+    concerts_found: int = 0
+    current_artist: int = 0
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True

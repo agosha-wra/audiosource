@@ -96,6 +96,28 @@ def run_vinyl_scrape_in_background():
         print("[VINYL] Background task finished")
 
 
+# Forward declare concert scrape function
+_concert_lock = threading.Lock()
+
+def run_concert_scrape_in_background():
+    """Run the concert scrape in a background thread."""
+    print("[CONCERTS] Background task started")
+    from app.services.bandsintown import BandsintownService
+    db = SessionLocal()
+    try:
+        with _concert_lock:
+            service = BandsintownService(db)
+            result = service.scrape_concerts()
+            print(f"[CONCERTS] Scrape result: {result}")
+    except Exception as e:
+        import traceback
+        print(f"[CONCERTS] Background task error: {e}")
+        print(f"[CONCERTS] Traceback: {traceback.format_exc()}")
+    finally:
+        db.close()
+        print("[VINYL] Background task finished")
+
+
 async def scheduled_scan_loop():
     """Background loop that checks for scheduled scans and upcoming releases."""
     global _scheduler_running
@@ -151,6 +173,19 @@ async def scheduled_scan_loop():
                     if should_scrape and vinyl_status.status != "scraping":
                         print(f"Starting scheduled vinyl releases scrape at {now}")
                         thread = threading.Thread(target=run_vinyl_scrape_in_background)
+                        thread.start()
+                
+                # Check for concerts daily
+                from app.models import ConcertScrapeStatus
+                concert_status = db.query(ConcertScrapeStatus).first()
+                if concert_status:
+                    should_scrape = (
+                        concert_status.last_scrape_at is None or
+                        (now - concert_status.last_scrape_at) > timedelta(hours=24)
+                    )
+                    if should_scrape and concert_status.status != "scraping":
+                        print(f"Starting scheduled concert scrape at {now}")
+                        thread = threading.Thread(target=run_concert_scrape_in_background)
                         thread.start()
                 
                 # Check for timed out downloads (every minute)
@@ -1364,6 +1399,94 @@ def delete_vinyl_release(release_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": "Vinyl release deleted"}
+
+
+# ============ Concert Endpoints ============
+
+from app.services.bandsintown import BandsintownService
+from app.schemas import ConcertResponse, ConcertScrapeStatusResponse
+
+
+@app.get("/api/concerts", response_model=List[ConcertResponse])
+def get_concerts(
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get upcoming concerts for library artists."""
+    service = BandsintownService(db)
+    return service.get_concerts(limit=limit, skip=skip)
+
+
+@app.post("/api/concerts/scrape", response_model=ConcertScrapeStatusResponse)
+def scrape_concerts(db: Session = Depends(get_db)):
+    """Scrape Bandsintown for concerts (runs synchronously)."""
+    service = BandsintownService(db)
+    status = service.get_or_create_scrape_status()
+    
+    # If already scraping, check if stuck
+    if status.status == "scraping":
+        if status.last_scrape_at:
+            stuck_threshold = timedelta(minutes=30)  # Concerts take longer
+            if datetime.utcnow() - status.last_scrape_at > stuck_threshold:
+                print(f"[CONCERTS] Resetting stuck scraping status")
+                status.status = "idle"
+                status.error_message = "Previous scrape timed out"
+                db.commit()
+            else:
+                return status
+        else:
+            print(f"[CONCERTS] Resetting scraping status with no timestamp")
+            status.status = "idle"
+            db.commit()
+    
+    # Run scrape synchronously
+    print(f"[CONCERTS] Starting synchronous concert scrape...")
+    try:
+        result = service.scrape_concerts()
+        print(f"[CONCERTS] Scrape result: {result}")
+        
+        db.refresh(status)
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("message", "Scrape failed"))
+        
+        return status
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_msg = f"Scrape failed: {str(e)}"
+        print(f"[CONCERTS] {error_msg}")
+        print(f"[CONCERTS] Traceback: {traceback.format_exc()}")
+        
+        status.status = "error"
+        status.error_message = error_msg
+        db.commit()
+        
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/concerts/status", response_model=ConcertScrapeStatusResponse)
+def get_concerts_status(db: Session = Depends(get_db)):
+    """Get the current concert scrape status."""
+    service = BandsintownService(db)
+    return service.get_or_create_scrape_status()
+
+
+@app.delete("/api/concerts/{concert_id}")
+def delete_concert(concert_id: int, db: Session = Depends(get_db)):
+    """Delete a concert from the list."""
+    from app.models import Concert
+    
+    concert = db.query(Concert).filter(Concert.id == concert_id).first()
+    if not concert:
+        raise HTTPException(status_code=404, detail="Concert not found")
+    
+    db.delete(concert)
+    db.commit()
+    
+    return {"message": "Concert deleted"}
 
 
 # ============ Settings Endpoints ============

@@ -198,3 +198,51 @@ class VinylReleasesScrapeStatus(Base):
     current_post = Column(Integer, default=0)  # Progress: current post being processed
     total_posts = Column(Integer, default=0)   # Progress: total posts to process
     error_message = Column(Text, nullable=True)
+
+
+class Concert(Base):
+    """Upcoming concerts from Bandsintown for library artists."""
+    __tablename__ = "concerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bandsintown_id = Column(String(50), unique=True, nullable=False, index=True)
+    
+    # Artist info
+    artist_id = Column(Integer, ForeignKey("artists.id"), nullable=True)
+    artist_name = Column(String(500), nullable=False)
+    
+    # Event info
+    event_date = Column(DateTime, nullable=False)
+    venue_name = Column(String(500), nullable=True)
+    venue_city = Column(String(200), nullable=True)
+    venue_region = Column(String(200), nullable=True)  # State/Province
+    venue_country = Column(String(100), nullable=True)
+    
+    # Links
+    ticket_url = Column(Text, nullable=True)
+    event_url = Column(Text, nullable=True)
+    
+    # Additional info
+    lineup = Column(Text, nullable=True)  # Other artists on the bill
+    description = Column(Text, nullable=True)
+    
+    # Timestamps
+    scraped_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    artist = relationship("Artist")
+
+
+class ConcertScrapeStatus(Base):
+    """Status of the Bandsintown concert scraping."""
+    __tablename__ = "concert_scrape_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), default="idle")  # idle, scraping, completed, error
+    last_scrape_at = Column(DateTime, nullable=True)
+    artists_checked = Column(Integer, default=0)
+    total_artists = Column(Integer, default=0)
+    concerts_found = Column(Integer, default=0)
+    current_artist = Column(Integer, default=0)  # Progress tracking
+    error_message = Column(Text, nullable=True)
