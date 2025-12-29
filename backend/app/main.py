@@ -77,14 +77,23 @@ _vinyl_lock = threading.Lock()
 
 def run_vinyl_scrape_in_background():
     """Run the vinyl releases scrape in a background thread."""
+    print("[VINYL] Background task started")
     from app.services.reddit import RedditService
     db = SessionLocal()
     try:
+        print("[VINYL] Acquiring lock...")
         with _vinyl_lock:
+            print("[VINYL] Lock acquired, starting scrape...")
             service = RedditService(db)
-            service.scrape_vinyl_releases(is_background=True)
+            result = service.scrape_vinyl_releases(is_background=True)
+            print(f"[VINYL] Scrape result: {result}")
+    except Exception as e:
+        import traceback
+        print(f"[VINYL] Background task error: {e}")
+        print(f"[VINYL] Traceback: {traceback.format_exc()}")
     finally:
         db.close()
+        print("[VINYL] Background task finished")
 
 
 async def scheduled_scan_loop():

@@ -139,12 +139,23 @@ class RedditService:
         
         try:
             # Get library artists
+            print(f"[VINYL] Getting library artists...")
             artist_lookup = self.get_library_artists()
-            logger.info(f"[VINYL] Found {len(artist_lookup)} artist names to match against")
+            print(f"[VINYL] Found {len(artist_lookup)} artist names to match against")
+            
+            if len(artist_lookup) == 0:
+                print("[VINYL] No artists with owned albums found - nothing to match against")
+                status.status = "completed"
+                status.posts_found = 0
+                status.matches_found = 0
+                status.error_message = "No artists with owned albums to match against"
+                self.db.commit()
+                return {"status": "completed", "posts_found": 0, "matches_found": 0}
             
             # Fetch posts from Reddit
+            print(f"[VINYL] Fetching posts from Reddit...")
             posts = self._fetch_reddit_posts(limit)
-            logger.info(f"[VINYL] Fetched {len(posts)} posts from r/vinylreleases")
+            print(f"[VINYL] Fetched {len(posts)} posts from r/vinylreleases")
             
             posts_found = len(posts)
             matches_found = 0
@@ -190,7 +201,7 @@ class RedditService:
                     )
                     self.db.add(vinyl_release)
                     matches_found += 1
-                    logger.info(f"[VINYL] Matched: '{title}' -> {matched_artist.name}")
+                    print(f"[VINYL] Matched: '{title}' -> {matched_artist.name}")
             
             self.db.commit()
             
@@ -200,7 +211,7 @@ class RedditService:
             status.matches_found = matches_found
             self.db.commit()
             
-            logger.info(f"[VINYL] Scrape completed: {posts_found} posts, {matches_found} matches")
+            print(f"[VINYL] Scrape completed: {posts_found} posts, {matches_found} matches")
             
             return {
                 "status": "completed",
@@ -209,7 +220,9 @@ class RedditService:
             }
             
         except Exception as e:
-            logger.error(f"[VINYL] Scrape failed: {e}")
+            import traceback
+            print(f"[VINYL] Scrape failed: {e}")
+            print(f"[VINYL] Traceback: {traceback.format_exc()}")
             status.status = "error"
             status.error_message = str(e)
             self.db.commit()
@@ -220,11 +233,15 @@ class RedditService:
         posts = []
         after = None
         
+        print(f"[VINYL] Starting to fetch up to {limit} posts from Reddit...")
+        
         while len(posts) < limit:
             try:
                 params = {"limit": min(100, limit - len(posts))}
                 if after:
                     params["after"] = after
+                
+                print(f"[VINYL] Making request to {self.SUBREDDIT_URL} with params {params}")
                 
                 response = httpx.get(
                     self.SUBREDDIT_URL,
@@ -232,10 +249,19 @@ class RedditService:
                     params=params,
                     timeout=30
                 )
+                
+                print(f"[VINYL] Reddit response status: {response.status_code}")
+                
+                if response.status_code != 200:
+                    print(f"[VINYL] Reddit returned non-200: {response.text[:500]}")
+                    break
+                
                 response.raise_for_status()
                 
                 data = response.json()
                 children = data.get("data", {}).get("children", [])
+                
+                print(f"[VINYL] Got {len(children)} posts in this batch")
                 
                 if not children:
                     break
@@ -248,10 +274,16 @@ class RedditService:
                 if not after:
                     break
                     
+            except httpx.TimeoutException:
+                print(f"[VINYL] Timeout fetching Reddit posts")
+                break
             except Exception as e:
-                logger.error(f"[VINYL] Error fetching Reddit posts: {e}")
+                import traceback
+                print(f"[VINYL] Error fetching Reddit posts: {e}")
+                print(f"[VINYL] Traceback: {traceback.format_exc()}")
                 break
         
+        print(f"[VINYL] Total posts fetched: {len(posts)}")
         return posts
     
     def get_vinyl_releases(self, limit: int = 50, skip: int = 0) -> List[VinylRelease]:
