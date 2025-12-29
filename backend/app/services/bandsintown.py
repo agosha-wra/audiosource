@@ -1,9 +1,11 @@
-"""Service for fetching concerts from Bandsintown API."""
+"""Service for fetching concerts by scraping Songkick."""
 
-import httpx
+import cloudscraper
+import re
 import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from sqlalchemy import distinct
 
@@ -11,14 +13,15 @@ from app.models import Artist, Album, Concert, ConcertScrapeStatus
 
 
 class BandsintownService:
-    """Service for fetching concerts from Bandsintown."""
+    """Service for fetching concerts from Songkick."""
     
-    BASE_URL = "https://rest.bandsintown.com"
-    # Bandsintown's public API works with any app_id identifier
-    APP_ID = "audiosource"
+    BASE_URL = "https://www.songkick.com"
     
     def __init__(self, db: Session):
         self.db = db
+        self.scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+        )
     
     def get_or_create_scrape_status(self) -> ConcertScrapeStatus:
         """Get or create the scrape status record."""
@@ -43,35 +46,104 @@ class BandsintownService:
         return self.db.query(Artist).filter(Artist.id.in_(artist_ids)).all()
     
     def fetch_artist_events(self, artist_name: str) -> List[Dict[str, Any]]:
-        """Fetch upcoming events for an artist from Bandsintown."""
-        # URL encode the artist name
+        """Fetch upcoming events for an artist by scraping Songkick."""
+        # Create URL-friendly artist name
         import urllib.parse
-        encoded_name = urllib.parse.quote(artist_name)
+        slug = re.sub(r'[^\w\s-]', '', artist_name.lower())
+        slug = re.sub(r'[\s]+', '-', slug)
         
-        url = f"{self.BASE_URL}/artists/{encoded_name}/events"
-        params = {
-            "app_id": self.APP_ID,
-            "date": "upcoming"
-        }
+        # First, search for the artist to get their Songkick URL
+        search_url = f"{self.BASE_URL}/search?query={urllib.parse.quote(artist_name)}&type=artists"
         
         try:
-            response = httpx.get(url, params=params, timeout=30)
-            
-            if response.status_code == 404:
-                # Artist not found on Bandsintown
-                return []
+            response = self.scraper.get(search_url, timeout=30)
             
             if response.status_code != 200:
-                print(f"[CONCERTS] Bandsintown error for '{artist_name}': {response.status_code}")
                 return []
             
-            data = response.json()
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Bandsintown returns an error object if artist not found
-            if isinstance(data, dict) and data.get("errorMessage"):
+            # Find the first artist result
+            artist_link = soup.select_one('.artist a[href*="/artists/"]')
+            if not artist_link:
                 return []
             
-            return data if isinstance(data, list) else []
+            artist_url = artist_link.get('href')
+            if not artist_url.startswith('http'):
+                artist_url = f"{self.BASE_URL}{artist_url}"
+            
+            # Add /calendar to get upcoming events
+            calendar_url = f"{artist_url}/calendar"
+            
+            # Fetch the artist's calendar page
+            response = self.scraper.get(calendar_url, timeout=30)
+            if response.status_code != 200:
+                return []
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            events = []
+            
+            # Parse event listings
+            event_elements = soup.select('.event-listings li.event')
+            
+            for event_el in event_elements[:20]:  # Limit to 20 events per artist
+                try:
+                    # Get event link and ID
+                    event_link = event_el.select_one('a[href*="/concerts/"]') or event_el.select_one('a[href*="/festivals/"]')
+                    if not event_link:
+                        continue
+                    
+                    event_url = event_link.get('href', '')
+                    if not event_url.startswith('http'):
+                        event_url = f"{self.BASE_URL}{event_url}"
+                    
+                    # Extract event ID from URL
+                    id_match = re.search(r'/(?:concerts|festivals)/(\d+)', event_url)
+                    event_id = id_match.group(1) if id_match else None
+                    if not event_id:
+                        continue
+                    
+                    # Get date
+                    date_el = event_el.select_one('time')
+                    event_date = None
+                    if date_el:
+                        datetime_str = date_el.get('datetime')
+                        if datetime_str:
+                            try:
+                                event_date = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+                            except:
+                                pass
+                    
+                    if not event_date:
+                        continue
+                    
+                    # Get venue info
+                    venue_el = event_el.select_one('.venue-name, .location')
+                    venue_name = venue_el.get_text(strip=True) if venue_el else None
+                    
+                    location_el = event_el.select_one('.venue-location, .location-name')
+                    location = location_el.get_text(strip=True) if location_el else ""
+                    
+                    # Parse location into city/country
+                    location_parts = [p.strip() for p in location.split(',')]
+                    city = location_parts[0] if len(location_parts) > 0 else None
+                    country = location_parts[-1] if len(location_parts) > 1 else None
+                    
+                    events.append({
+                        'id': f"sk-{event_id}",
+                        'datetime': event_date.isoformat(),
+                        'url': event_url,
+                        'venue': {
+                            'name': venue_name,
+                            'city': city,
+                            'country': country
+                        }
+                    })
+                    
+                except Exception as e:
+                    continue
+            
+            return events
             
         except Exception as e:
             print(f"[CONCERTS] Error fetching events for '{artist_name}': {e}")
@@ -146,10 +218,6 @@ class BandsintownService:
                         # Get venue info
                         venue = event.get("venue", {})
                         
-                        # Get lineup (other artists)
-                        lineup_artists = event.get("lineup", [])
-                        lineup = ", ".join(lineup_artists) if lineup_artists else None
-                        
                         # Create new concert
                         concert = Concert(
                             bandsintown_id=event_id,
@@ -158,12 +226,9 @@ class BandsintownService:
                             event_date=event_datetime,
                             venue_name=venue.get("name"),
                             venue_city=venue.get("city"),
-                            venue_region=venue.get("region"),
                             venue_country=venue.get("country"),
                             ticket_url=event.get("url"),
-                            event_url=event.get("url"),
-                            lineup=lineup,
-                            description=event.get("description")
+                            event_url=event.get("url")
                         )
                         self.db.add(concert)
                         concerts_added += 1
@@ -172,8 +237,8 @@ class BandsintownService:
                         print(f"[CONCERTS] Error processing event: {e}")
                         continue
                 
-                # Rate limiting - Bandsintown recommends 1 request per second
-                time.sleep(1)
+                # Rate limiting for Songkick
+                time.sleep(2)
             
             self.db.commit()
             
