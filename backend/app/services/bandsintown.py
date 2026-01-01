@@ -147,7 +147,7 @@ class BandsintownService:
         
         try:
             # Fetch multiple pages of upcoming concerts
-            for page in range(1, 4):  # Get first 3 pages
+            for page in range(1, 11):  # Get first 10 pages for better coverage
                 page_url = f"{full_url}?page={page}" if page > 1 else full_url
                 response = self.scraper.get(page_url, timeout=30)
                 
@@ -155,17 +155,19 @@ class BandsintownService:
                     break
                 
                 soup = BeautifulSoup(response.text, 'html.parser')
-                event_elements = soup.select('.event-listings li.event-listing')
+                # Updated selector for current Songkick HTML structure
+                event_elements = soup.select('li.event-listings-element')
                 
                 if not event_elements:
+                    print(f"[CONCERTS] Page {page}: no events found with selector")
                     break
                 
                 print(f"[CONCERTS] Page {page}: found {len(event_elements)} events")
                 
                 for event_el in event_elements:
                     try:
-                        # Get event link and ID
-                        event_link = event_el.select_one('a[href*="/concerts/"]') or event_el.select_one('a[href*="/festivals/"]')
+                        # Get event link and ID from the event-link class
+                        event_link = event_el.select_one('a.event-link[href*="/concerts/"]') or event_el.select_one('a[href*="/festivals/"]')
                         if not event_link:
                             continue
                         
@@ -186,29 +188,34 @@ class BandsintownService:
                             datetime_str = date_el.get('datetime')
                             if datetime_str:
                                 try:
+                                    # Handle timezone offset format
                                     event_date = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
                                     event_date = event_date.replace(tzinfo=None)
                                 except:
-                                    pass
+                                    # Try parsing date-only format
+                                    try:
+                                        event_date = datetime.strptime(datetime_str[:10], '%Y-%m-%d')
+                                    except:
+                                        pass
                         
                         if not event_date or event_date < now:
                             continue
                         
-                        # Get artist name - look for the headline artist
-                        artist_el = event_el.select_one('.artists strong, .headliners a, .artists a')
+                        # Get artist name from p.artists strong element
+                        artist_el = event_el.select_one('p.artists strong')
                         artist_name = artist_el.get_text(strip=True) if artist_el else None
                         
                         if not artist_name:
-                            # Try to get from event text
-                            title_el = event_el.select_one('.artists, .event-title')
-                            if title_el:
-                                artist_name = title_el.get_text(strip=True).split(' at ')[0].strip()
+                            # Fallback: try to get from any strong in artists paragraph
+                            artist_el = event_el.select_one('p.artists')
+                            if artist_el:
+                                artist_name = artist_el.get_text(strip=True)
                         
                         if not artist_name:
                             continue
                         
-                        # Get venue info
-                        venue_el = event_el.select_one('.venue-name, .location a')
+                        # Get venue info from venue-link
+                        venue_el = event_el.select_one('a.venue-link')
                         venue_name = venue_el.get_text(strip=True) if venue_el else None
                         
                         all_events.append({

@@ -28,7 +28,7 @@ services:
       SLSKD_API_KEY: 8b8102e8275a9a66
       SLSKD_DOWNLOAD_DIR: /downloads
       # Filter concerts to only show events in this city/country
-      CONCERT_CITY: ${CONCERT_CITY:-Paris}
+      CONCERT_CITY: ${CONCERT_CITY:Paris}
     ports:
       - "8080:80"
     volumes:
