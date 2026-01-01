@@ -94,18 +94,26 @@ class BandsintownService:
         return lookup
     
     def _find_matching_artist(self, concert_artist: str, artist_lookup: Dict[str, Artist]) -> Optional[Artist]:
-        """Find a matching artist in the library."""
+        """Find a matching artist in the library. Uses strict matching to avoid false positives."""
         normalized = self._normalize_name(concert_artist)
         if not normalized:
             return None
         
-        # Exact match
+        # Exact match (after normalization)
         if normalized in artist_lookup:
             return artist_lookup[normalized]
         
-        # Check if library artist is contained in concert artist name (for "Artist + Guest" formats)
+        # Check for "Artist + Guest" or "Artist with Special Guest" formats
+        # Only match if the library artist appears as a complete word at the START of the concert name
         for lib_name, artist in artist_lookup.items():
-            if lib_name in normalized or normalized in lib_name:
+            # Skip very short names (3 chars or less) to avoid false positives
+            if len(lib_name) <= 3:
+                continue
+            
+            # Check if concert name starts with artist name followed by word boundary
+            # e.g. "radiohead with special guest" should match "radiohead"
+            pattern = r'^' + re.escape(lib_name) + r'(?:\s|$)'
+            if re.match(pattern, normalized):
                 return artist
         
         return None
