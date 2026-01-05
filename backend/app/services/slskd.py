@@ -268,26 +268,29 @@ class SlskdService:
                     username = response.get("username", "")
                     files = response.get("files", [])
                     
-                    # Find matching audio files
-                    matching_files = self._find_matching_files(
+                    # Find matching audio files grouped by folder
+                    folders = self._find_matching_files_by_folder(
                         files, artist_name, album_title
                     )
                     
-                    if matching_files:
-                        score = self._calculate_score(
-                            matching_files, artist_name, album_title, expected_tracks
-                        )
-                        
-                        if score > 0:
-                            all_candidates.append({
-                                "username": username,
-                                "files": matching_files,
-                                "score": score,
-                                "track_count": len(matching_files)
-                            })
+                    # Score each folder separately and add as individual candidates
+                    for folder_path, folder_files in folders.items():
+                        if folder_files:
+                            score = self._calculate_score(
+                                folder_files, artist_name, album_title, expected_tracks
+                            )
+                            
+                            if score > 0:
+                                all_candidates.append({
+                                    "username": username,
+                                    "folder": folder_path,
+                                    "files": folder_files,
+                                    "score": score,
+                                    "track_count": len(folder_files)
+                                })
                 
                 # If we have good candidates, stop searching
-                if len(all_candidates) >= 3:
+                if len(all_candidates) >= 5:
                     break
             
             if not all_candidates:
@@ -296,18 +299,25 @@ class SlskdService:
                 self.db.commit()
                 return download
             
-            # Sort by score and try to download from best candidate
+            # Sort by score and try to download from best candidate (single folder)
             all_candidates.sort(key=lambda x: x["score"], reverse=True)
             
-            for candidate in all_candidates[:3]:
-                if self.client.download_files(candidate["username"], candidate["files"]):
-                    download.status = "downloading"
-                    download.slskd_username = candidate["username"]
-                    download.total_files = len(candidate["files"])
-                    download.total_bytes = sum(f.get("size", 0) for f in candidate["files"])
-                    download.started_at = datetime.utcnow()
-                    self.db.commit()
-                    return download
+            print(f"slskd: Found {len(all_candidates)} candidate folders")
+            for i, c in enumerate(all_candidates[:5]):
+                print(f"slskd:   #{i+1} score={c['score']} tracks={c['track_count']} user={c['username']} folder={c.get('folder', 'unknown')}")
+            
+            # Only try the single best candidate
+            best = all_candidates[0]
+            print(f"slskd: Downloading from best candidate: {best['username']} - {best.get('folder', 'unknown')} (score={best['score']}, {best['track_count']} tracks)")
+            
+            if self.client.download_files(best["username"], best["files"]):
+                download.status = "downloading"
+                download.slskd_username = best["username"]
+                download.total_files = len(best["files"])
+                download.total_bytes = sum(f.get("size", 0) for f in best["files"])
+                download.started_at = datetime.utcnow()
+                self.db.commit()
+                return download
             
             download.status = "failed"
             download.error_message = "Failed to start download from any source"
@@ -321,21 +331,29 @@ class SlskdService:
             print(f"slskd: Error searching/downloading: {e}")
             return download
     
-    def _find_matching_files(
+    def _get_folder_path(self, filename: str) -> str:
+        """Extract the folder path from a full file path."""
+        # Handle both forward and backslashes
+        if '\\' in filename:
+            parts = filename.rsplit('\\', 1)
+        else:
+            parts = filename.rsplit('/', 1)
+        return parts[0] if len(parts) > 1 else ""
+    
+    def _find_matching_files_by_folder(
         self,
         files: List[Dict],
         artist_name: str,
         album_title: str
-    ) -> List[Dict]:
-        """Find audio files that match the artist/album."""
-        matching = []
+    ) -> Dict[str, List[Dict]]:
+        """Find audio files that match the artist/album, grouped by folder."""
+        folders: Dict[str, List[Dict]] = {}
         
         artist_words = [w.lower() for w in artist_name.split() if len(w) > 2]
         title_words = [w.lower() for w in album_title.split() if len(w) > 2]
         
         for file_info in files:
             filename = file_info.get("filename", "").lower()
-            size = file_info.get("size", 0)
             
             # Check if it's an audio file (prefer MP3, exclude FLAC for size)
             if any(ext in filename for ext in [".mp3", ".m4a", ".ogg"]):
@@ -343,13 +361,33 @@ class SlskdService:
                 title_match = any(w in filename for w in title_words)
                 
                 if artist_match or title_match:
-                    matching.append({
+                    folder = self._get_folder_path(file_info.get("filename", ""))
+                    if folder not in folders:
+                        folders[folder] = []
+                    folders[folder].append({
                         **file_info,
                         "artist_match": artist_match,
                         "title_match": title_match
                     })
         
-        return matching
+        return folders
+    
+    def _find_matching_files(
+        self,
+        files: List[Dict],
+        artist_name: str,
+        album_title: str
+    ) -> List[Dict]:
+        """Find audio files that match the artist/album - returns best folder only."""
+        # Group by folder first
+        folders = self._find_matching_files_by_folder(files, artist_name, album_title)
+        
+        if not folders:
+            return []
+        
+        # Return the folder with the most files (as a heuristic for "complete album")
+        best_folder = max(folders.keys(), key=lambda f: len(folders[f]))
+        return folders[best_folder]
     
     def _calculate_score(
         self,
