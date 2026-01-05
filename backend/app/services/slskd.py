@@ -4,6 +4,7 @@ Based on the slskd API: https://github.com/slskd/slskd
 """
 
 import os
+import re
 import time
 import shutil
 import requests
@@ -241,6 +242,16 @@ class SlskdService:
         album_title = album.title
         expected_tracks = album.track_count or 0
         
+        # Extract year from release_date for self-titled albums
+        release_year = None
+        if album.release_date:
+            year_match = re.search(r'\b(19|20)\d{2}\b', album.release_date)
+            if year_match:
+                release_year = year_match.group(0)
+        
+        # Check if it's a self-titled album
+        is_self_titled = artist_name.lower().strip() == album_title.lower().strip()
+        
         # Update download to searching status
         download.status = "searching"
         download.artist_name = artist_name
@@ -249,11 +260,21 @@ class SlskdService:
         
         try:
             # Search for the album
-            search_queries = [
-                f'"{artist_name}" "{album_title}"',
-                f'{artist_name} {album_title}',
-                f'{artist_name} - {album_title}',
-            ]
+            # For self-titled albums, include year if available to disambiguate
+            if is_self_titled and release_year:
+                print(f"slskd: Self-titled album detected, using year {release_year} in search")
+                search_queries = [
+                    f'"{artist_name}" "{album_title}" {release_year}',
+                    f'{artist_name} {album_title} {release_year}',
+                    f'{artist_name} - {album_title} {release_year}',
+                    f'"{artist_name}" "{album_title}"',  # Fallback without year
+                ]
+            else:
+                search_queries = [
+                    f'"{artist_name}" "{album_title}"',
+                    f'{artist_name} {album_title}',
+                    f'{artist_name} - {album_title}',
+                ]
             
             all_candidates = []
             
