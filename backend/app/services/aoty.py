@@ -1,4 +1,4 @@
-"""Service for scraping Album of the Year (AOTY) for new releases."""
+"""Service for scraping Album of the Year (AOTY) for new releases and enrichment."""
 
 import cloudscraper
 from bs4 import BeautifulSoup
@@ -6,9 +6,11 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import re
 import logging
+import time
+import urllib.parse
 from sqlalchemy.orm import Session
 
-from app.models import NewRelease, NewReleasesScrapeStatus
+from app.models import NewRelease, NewReleasesScrapeStatus, AOTYEnrichmentStatus, Album, Artist
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,16 @@ class AOTYService:
     
     def __init__(self, db: Session):
         self.db = db
+    
+    def _create_scraper(self):
+        """Create a cloudscraper instance."""
+        return cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'desktop': True
+            }
+        )
     
     def get_or_create_scrape_status(self) -> NewReleasesScrapeStatus:
         """Get or create the scrape status record."""
@@ -45,56 +57,29 @@ class AOTYService:
         year: Optional[int] = None,
         week: Optional[int] = None
     ) -> Dict[str, Any]:
-        """
-        Scrape the weekly releases from AOTY.
-        
-        Args:
-            year: Year to scrape (default: current year)
-            week: Week number to scrape (default: current week)
-        
-        Returns:
-            Dict with scrape results
-        """
+        """Scrape the weekly releases from AOTY."""
         status = self.get_or_create_scrape_status()
         
-        # If already scraping, return current status
         if status.status == "scraping":
             return {"status": "already_scraping", "message": "Scrape already in progress"}
         
-        # Set defaults
         if year is None or week is None:
             year, week = self.get_current_week()
         
-        # Update status to scraping
         status.status = "scraping"
         status.last_scrape_at = datetime.utcnow()
         status.error_message = None
         self.db.commit()
         
         try:
-            # Construct URL
             url = f"{self.BASE_URL}/week/{year}/{week}/releases/?sort=critic"
-            
             logger.info(f"[AOTY] Scraping {url}")
             
-            # Use cloudscraper to bypass Cloudflare protection
-            scraper = cloudscraper.create_scraper(
-                browser={
-                    'browser': 'chrome',
-                    'platform': 'windows',
-                    'desktop': True
-                }
-            )
-            
+            scraper = self._create_scraper()
             response = scraper.get(url, timeout=30)
             response.raise_for_status()
             
-            logger.info(f"[AOTY] Got response: {response.status_code}, length: {len(response.text)}")
-            
-            # Parse HTML
             soup = BeautifulSoup(response.text, "lxml")
-            
-            # Find all album blocks
             albums_found = 0
             album_blocks = soup.select(".albumBlock")
             
@@ -106,22 +91,13 @@ class AOTYService:
                         albums_found += 1
                 except Exception as e:
                     logger.warning(f"[AOTY] Error parsing album block: {e}")
-                    continue
             
-            # Update status
             status.status = "completed"
             status.albums_found = albums_found
             status.next_scrape_at = datetime.utcnow() + timedelta(hours=24)
             self.db.commit()
             
-            logger.info(f"[AOTY] Scrape completed: {albums_found} albums found for week {week}/{year}")
-            
-            return {
-                "status": "completed",
-                "albums_found": albums_found,
-                "year": year,
-                "week": week
-            }
+            return {"status": "completed", "albums_found": albums_found, "year": year, "week": week}
             
         except Exception as e:
             logger.error(f"[AOTY] Scrape failed: {e}")
@@ -130,15 +106,9 @@ class AOTYService:
             self.db.commit()
             return {"status": "error", "message": str(e)}
     
-    def _parse_album_block(
-        self, 
-        block, 
-        year: int, 
-        week: int
-    ) -> Optional[Dict[str, Any]]:
+    def _parse_album_block(self, block, year: int, week: int) -> Optional[Dict[str, Any]]:
         """Parse a single album block from AOTY."""
         try:
-            # Get album title element
             title_elem = block.select_one(".albumTitle")
             if not title_elem:
                 return None
@@ -147,49 +117,33 @@ class AOTYService:
             if not album_title:
                 return None
             
-            # Get album link from parent anchor or image anchor
             album_link = ""
-            
-            # Try to find the link that wraps the title
             parent = title_elem.parent
             if parent and parent.name == "a":
                 album_link = parent.get("href", "")
-            
-            # Alternatively, try the image link
             if not album_link:
                 img_link = block.select_one(".image a")
                 if img_link:
                     album_link = img_link.get("href", "")
-            
             if not album_link:
                 return None
             
-            # Full URL
             aoty_url = f"{self.BASE_URL}{album_link}" if album_link.startswith("/") else album_link
             
-            # Get artist name
             artist_elem = block.select_one(".artistTitle")
             artist_name = artist_elem.get_text(strip=True) if artist_elem else "Unknown Artist"
             
-            # Get cover art from image
             cover_art_url = None
             img_elem = block.select_one(".image img")
             if img_elem:
-                # Try srcset first for higher quality, then src
                 srcset = img_elem.get("srcset", "")
-                if srcset:
-                    # Get the 2x image from srcset
-                    cover_art_url = srcset.split(" ")[0]
-                else:
-                    cover_art_url = img_elem.get("src")
+                cover_art_url = srcset.split(" ")[0] if srcset else img_elem.get("src")
             
-            # Get release date and type from .type element
             release_date = None
             release_type = "LP"
             type_elem = block.select_one(".type")
             if type_elem:
                 type_text = type_elem.get_text(strip=True)
-                # Parse "Oct 31 • Box Set" format
                 if "•" in type_text:
                     parts = type_text.split("•")
                     release_date = parts[0].strip()
@@ -197,102 +151,55 @@ class AOTYService:
                 else:
                     release_date = type_text
             
-            # Get critic score
             critic_score = None
             score_elem = block.select_one(".ratingRow .rating, .rating")
             if score_elem:
-                score_text = score_elem.get_text(strip=True)
                 try:
-                    critic_score = int(score_text)
+                    critic_score = int(score_elem.get_text(strip=True))
                 except ValueError:
                     pass
             
-            # Get number of critics from ratingText
             num_critics = None
-            rating_texts = block.select(".ratingText")
-            for rt in rating_texts:
-                text = rt.get_text(strip=True)
-                # Look for "(13)" format
-                match = re.search(r"\((\d+)\)", text)
+            for rt in block.select(".ratingText"):
+                match = re.search(r"\((\d+)\)", rt.get_text(strip=True))
                 if match:
                     num_critics = int(match.group(1))
                     break
             
             return {
-                "artist_name": artist_name,
-                "album_title": album_title,
-                "release_date": release_date,
-                "release_type": release_type,
-                "aoty_url": aoty_url,
-                "cover_art_url": cover_art_url,
-                "critic_score": critic_score,
-                "num_critics": num_critics,
-                "week_year": year,
-                "week_number": week
+                "artist_name": artist_name, "album_title": album_title,
+                "release_date": release_date, "release_type": release_type,
+                "aoty_url": aoty_url, "cover_art_url": cover_art_url,
+                "critic_score": critic_score, "num_critics": num_critics,
+                "week_year": year, "week_number": week
             }
-            
         except Exception as e:
             logger.warning(f"[AOTY] Error parsing album block: {e}")
             return None
     
     def _save_release(self, data: Dict[str, Any]) -> NewRelease:
         """Save or update a release in the database."""
-        # Check if release already exists (by AOTY URL)
-        existing = self.db.query(NewRelease).filter(
-            NewRelease.aoty_url == data["aoty_url"]
-        ).first()
-        
+        existing = self.db.query(NewRelease).filter(NewRelease.aoty_url == data["aoty_url"]).first()
         if existing:
-            # Update existing record
             existing.critic_score = data["critic_score"]
             existing.num_critics = data["num_critics"]
             existing.scraped_at = datetime.utcnow()
             self.db.commit()
             return existing
         
-        # Create new record
-        release = NewRelease(
-            artist_name=data["artist_name"],
-            album_title=data["album_title"],
-            release_date=data["release_date"],
-            release_type=data["release_type"],
-            aoty_url=data["aoty_url"],
-            cover_art_url=data["cover_art_url"],
-            critic_score=data["critic_score"],
-            num_critics=data["num_critics"],
-            week_year=data["week_year"],
-            week_number=data["week_number"]
-        )
+        release = NewRelease(**data)
         self.db.add(release)
         self.db.commit()
         self.db.refresh(release)
         return release
     
-    def get_releases(
-        self,
-        year: Optional[int] = None,
-        week: Optional[int] = None,
-        limit: int = 50
-    ) -> List[NewRelease]:
-        """
-        Get releases from the database.
-        
-        Args:
-            year: Filter by year
-            week: Filter by week
-            limit: Maximum number of results
-        
-        Returns:
-            List of NewRelease objects sorted by critic score
-        """
+    def get_releases(self, year: Optional[int] = None, week: Optional[int] = None, limit: int = 50) -> List[NewRelease]:
+        """Get releases from the database."""
         query = self.db.query(NewRelease)
-        
         if year:
             query = query.filter(NewRelease.week_year == year)
         if week:
             query = query.filter(NewRelease.week_number == week)
-        
-        # Sort by critic score descending, then by num_critics
         return query.order_by(
             NewRelease.critic_score.desc().nullslast(),
             NewRelease.num_critics.desc().nullslast()
@@ -300,17 +207,288 @@ class AOTYService:
     
     def get_latest_releases(self, limit: int = 50) -> List[NewRelease]:
         """Get the latest week's releases."""
-        # Find the most recent week we have data for
         latest = self.db.query(NewRelease).order_by(
-            NewRelease.week_year.desc(),
-            NewRelease.week_number.desc()
+            NewRelease.week_year.desc(), NewRelease.week_number.desc()
         ).first()
-        
         if not latest:
             return []
+        return self.get_releases(year=latest.week_year, week=latest.week_number, limit=limit)
+    
+    # ============ AOTY Enrichment Methods ============
+    
+    def get_or_create_enrichment_status(self) -> AOTYEnrichmentStatus:
+        """Get or create the AOTY enrichment status record."""
+        status = self.db.query(AOTYEnrichmentStatus).first()
+        if not status:
+            status = AOTYEnrichmentStatus(status="idle", albums_enriched=0, total_albums_enriched=0)
+            self.db.add(status)
+            self.db.commit()
+            self.db.refresh(status)
+        return status
+    
+    def search_artist_on_aoty(self, artist_name: str) -> Optional[str]:
+        """
+        Search for an artist on AOTY and return their artist page URL.
+        Returns the URL path like "/artist/68701-geese/" or None.
+        """
+        try:
+            encoded_query = urllib.parse.quote(artist_name)
+            search_url = f"{self.BASE_URL}/search/artists/?q={encoded_query}"
+            
+            logger.info(f"[AOTY] Searching for artist: {artist_name}")
+            
+            scraper = self._create_scraper()
+            response = scraper.get(search_url, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, "lxml")
+            artist_links = soup.select("a[href*='/artist/']")
+            
+            if not artist_links:
+                logger.info(f"[AOTY] No artist results found for: {artist_name}")
+                return None
+            
+            artist_lower = artist_name.lower().strip()
+            
+            for link in artist_links:
+                link_text = link.get_text(strip=True).lower()
+                href = link.get("href", "")
+                
+                if not href or "/artist/" not in href:
+                    continue
+                
+                if (artist_lower == link_text or 
+                    artist_lower in link_text or 
+                    link_text in artist_lower or
+                    self._fuzzy_match(artist_lower, link_text, threshold=0.8)):
+                    logger.info(f"[AOTY] Found artist page: {href}")
+                    return href
+            
+            logger.info(f"[AOTY] No matching artist found for: {artist_name}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"[AOTY] Artist search error for {artist_name}: {e}")
+            return None
+    
+    def scrape_artist_discography(self, artist_url: str) -> List[Dict[str, Any]]:
+        """
+        Scrape an artist's page to get all their albums with scores.
+        Returns list of dicts with title, aoty_url, and critic_score.
+        """
+        try:
+            full_url = f"{self.BASE_URL}{artist_url}" if artist_url.startswith("/") else artist_url
+            logger.info(f"[AOTY] Scraping artist discography: {full_url}")
+            
+            scraper = self._create_scraper()
+            response = scraper.get(full_url, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, "lxml")
+            albums = []
+            
+            for block in soup.select(".albumBlock"):
+                try:
+                    album_data = self._parse_artist_page_album(block)
+                    if album_data:
+                        albums.append(album_data)
+                except Exception as e:
+                    logger.warning(f"[AOTY] Error parsing album on artist page: {e}")
+            
+            logger.info(f"[AOTY] Found {len(albums)} albums on artist page")
+            return albums
+            
+        except Exception as e:
+            logger.error(f"[AOTY] Error scraping artist page {artist_url}: {e}")
+            return []
+    
+    def _parse_artist_page_album(self, block) -> Optional[Dict[str, Any]]:
+        """Parse an album block from an artist's page."""
+        try:
+            title_elem = block.select_one(".albumTitle")
+            if not title_elem:
+                return None
+            
+            album_title = title_elem.get_text(strip=True)
+            if not album_title:
+                return None
+            
+            album_link = ""
+            parent = title_elem.parent
+            if parent and parent.name == "a":
+                album_link = parent.get("href", "")
+            if not album_link:
+                img_link = block.select_one(".image a")
+                if img_link:
+                    album_link = img_link.get("href", "")
+            if not album_link:
+                return None
+            
+            aoty_url = f"{self.BASE_URL}{album_link}" if album_link.startswith("/") else album_link
+            
+            critic_score = None
+            score_elem = block.select_one(".ratingRow .rating, .rating")
+            if score_elem:
+                try:
+                    critic_score = int(score_elem.get_text(strip=True))
+                except ValueError:
+                    pass
+            
+            return {"title": album_title, "aoty_url": aoty_url, "critic_score": critic_score}
+            
+        except Exception as e:
+            logger.warning(f"[AOTY] Error parsing artist page album: {e}")
+            return None
+    
+    def _fuzzy_match(self, str1: str, str2: str, threshold: float = 0.85) -> bool:
+        """Simple fuzzy matching using Jaccard similarity."""
+        if not str1 or not str2:
+            return False
+        s1 = set(str1.lower().replace(' ', ''))
+        s2 = set(str2.lower().replace(' ', ''))
+        if not s1 or not s2:
+            return False
+        intersection = len(s1 & s2)
+        union = len(s1 | s2)
+        return (intersection / union if union > 0 else 0) >= threshold
+    
+    def _normalize_title(self, title: str) -> str:
+        """Normalize an album title for matching."""
+        if not title:
+            return ""
+        normalized = title.lower().strip()
+        normalized = re.sub(r'\s*\([^)]*\)\s*$', '', normalized).strip()
+        normalized = re.sub(r'[^\w\s]', '', normalized).strip()
+        return normalized
+    
+    def enrich_artist_albums(self, artist: Artist) -> int:
+        """
+        Enrich all missing albums for an artist with AOTY data.
+        Uses artist page approach: only 2 requests (search + artist page).
+        """
+        missing_albums = self.db.query(Album).filter(
+            Album.artist_id == artist.id,
+            Album.is_owned == False,
+            Album.aoty_url == None
+        ).all()
         
-        return self.get_releases(
-            year=latest.week_year,
-            week=latest.week_number,
-            limit=limit
-        )
+        if not missing_albums:
+            logger.info(f"[AOTY] No albums to enrich for {artist.name}")
+            return 0
+        
+        logger.info(f"[AOTY] Enriching {len(missing_albums)} albums for {artist.name}")
+        
+        # Step 1: Search for the artist to get their AOTY page URL
+        artist_url = self.search_artist_on_aoty(artist.name)
+        
+        if not artist_url:
+            logger.info(f"[AOTY] Could not find artist on AOTY: {artist.name}")
+            for album in missing_albums:
+                album.aoty_url = ""  # Mark as checked
+            self.db.commit()
+            return 0
+        
+        time.sleep(1)  # Small delay between requests
+        
+        # Step 2: Scrape the artist's page to get all albums with scores
+        aoty_albums = self.scrape_artist_discography(artist_url)
+        
+        if not aoty_albums:
+            logger.info(f"[AOTY] No albums found on artist page for: {artist.name}")
+            for album in missing_albums:
+                album.aoty_url = ""
+            self.db.commit()
+            return 0
+        
+        # Step 3: Match our missing albums against AOTY albums
+        enriched_count = 0
+        
+        for album in missing_albums:
+            album_title_normalized = self._normalize_title(album.title)
+            matched = False
+            
+            for aoty_album in aoty_albums:
+                aoty_title_normalized = self._normalize_title(aoty_album.get("title", ""))
+                
+                if (album_title_normalized == aoty_title_normalized or
+                    self._fuzzy_match(album_title_normalized, aoty_title_normalized, threshold=0.85)):
+                    album.aoty_url = aoty_album.get("aoty_url")
+                    album.critic_score = aoty_album.get("critic_score")
+                    enriched_count += 1
+                    matched = True
+                    logger.info(f"[AOTY] Enriched: {album.title} (score: {aoty_album.get('critic_score')})")
+                    break
+            
+            if not matched:
+                album.aoty_url = ""  # Mark as checked but not found
+        
+        self.db.commit()
+        logger.info(f"[AOTY] Enriched {enriched_count}/{len(missing_albums)} albums for {artist.name}")
+        return enriched_count
+    
+    def run_enrichment_job(self) -> Dict[str, Any]:
+        """
+        Run the AOTY enrichment job for one artist.
+        Called by scheduler every ~10 minutes, processes artists round-robin.
+        """
+        status = self.get_or_create_enrichment_status()
+        
+        if status.status == "running":
+            return {"status": "already_running", "message": "Enrichment job already in progress"}
+        
+        status.status = "running"
+        status.last_run_at = datetime.utcnow()
+        status.error_message = None
+        self.db.commit()
+        
+        try:
+            # Find artists with missing albums that need enrichment
+            artists_needing_enrichment = self.db.query(Artist).join(Album).filter(
+                Album.is_owned == False,
+                Album.aoty_url == None
+            ).distinct().all()
+            
+            if not artists_needing_enrichment:
+                status.status = "completed"
+                status.albums_enriched = 0
+                self.db.commit()
+                logger.info("[AOTY] No artists need enrichment")
+                return {"status": "completed", "message": "No artists need enrichment", "enriched": 0}
+            
+            # Round-robin: find next artist after last_artist_id
+            artist_to_process = None
+            if status.last_artist_id:
+                for artist in sorted(artists_needing_enrichment, key=lambda a: a.id):
+                    if artist.id > status.last_artist_id:
+                        artist_to_process = artist
+                        break
+            
+            if not artist_to_process:
+                artist_to_process = min(artists_needing_enrichment, key=lambda a: a.id)
+            
+            logger.info(f"[AOTY] Processing artist: {artist_to_process.name} (ID: {artist_to_process.id})")
+            
+            enriched = self.enrich_artist_albums(artist_to_process)
+            
+            status.status = "completed"
+            status.last_artist_id = artist_to_process.id
+            status.last_artist_name = artist_to_process.name
+            status.albums_enriched = enriched
+            status.total_albums_enriched = (status.total_albums_enriched or 0) + enriched
+            self.db.commit()
+            
+            logger.info(f"[AOTY] Enrichment completed for {artist_to_process.name}: {enriched} albums enriched")
+            
+            return {
+                "status": "completed",
+                "artist": artist_to_process.name,
+                "enriched": enriched,
+                "total_enriched": status.total_albums_enriched
+            }
+            
+        except Exception as e:
+            logger.error(f"[AOTY] Enrichment job error: {e}")
+            status.status = "error"
+            status.error_message = str(e)
+            self.db.commit()
+            return {"status": "error", "message": str(e)}

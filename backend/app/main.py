@@ -8,7 +8,7 @@ import threading
 import asyncio
 
 from app.database import get_db, engine, Base, SessionLocal
-from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus, Download
+from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus, Download, AOTYEnrichmentStatus
 from app.schemas import (
     AlbumResponse,
     AlbumDetailResponse,
@@ -23,6 +23,7 @@ from app.schemas import (
     UpcomingReleasesStatusResponse,
     NewReleaseResponse,
     NewReleasesScrapeStatusResponse,
+    AOTYEnrichmentStatusResponse,
     DownloadResponse,
     SlskdStatusResponse,
     MetadataMatchCandidate,
@@ -115,7 +116,28 @@ def run_concert_scrape_in_background():
         print(f"[CONCERTS] Traceback: {traceback.format_exc()}")
     finally:
         db.close()
-        print("[VINYL] Background task finished")
+        print("[CONCERTS] Background task finished")
+
+
+# Forward declare AOTY enrichment function
+_aoty_enrichment_lock = threading.Lock()
+
+def run_aoty_enrichment_in_background():
+    """Run the AOTY enrichment job in a background thread."""
+    print("[AOTY] Enrichment background task started")
+    db = SessionLocal()
+    try:
+        with _aoty_enrichment_lock:
+            service = AOTYService(db)
+            result = service.run_enrichment_job()
+            print(f"[AOTY] Enrichment result: {result}")
+    except Exception as e:
+        import traceback
+        print(f"[AOTY] Enrichment background task error: {e}")
+        print(f"[AOTY] Traceback: {traceback.format_exc()}")
+    finally:
+        db.close()
+        print("[AOTY] Enrichment background task finished")
 
 
 async def scheduled_scan_loop():
@@ -193,6 +215,24 @@ async def scheduled_scan_loop():
                 timed_out = service.check_and_timeout_downloads(timeout_minutes=5)
                 if timed_out > 0:
                     print(f"Timed out {timed_out} stuck downloads")
+                
+                # AOTY Enrichment job - runs every 10 minutes
+                from app.models import AOTYEnrichmentStatus
+                aoty_status = db.query(AOTYEnrichmentStatus).first()
+                if not aoty_status:
+                    # Create initial status
+                    aoty_status = AOTYEnrichmentStatus(status="idle")
+                    db.add(aoty_status)
+                    db.commit()
+                
+                should_enrich = (
+                    aoty_status.last_run_at is None or
+                    (now - aoty_status.last_run_at) > timedelta(minutes=10)
+                )
+                if should_enrich and aoty_status.status != "running":
+                    print(f"Starting scheduled AOTY enrichment at {now}")
+                    thread = threading.Thread(target=run_aoty_enrichment_in_background)
+                    thread.start()
             finally:
                 db.close()
         except Exception as e:
@@ -215,6 +255,22 @@ async def startup_event():
             # Add dismissed column to vinyl_releases and concerts
             conn.execute(text("ALTER TABLE vinyl_releases ADD COLUMN IF NOT EXISTS dismissed BOOLEAN DEFAULT FALSE"))
             conn.execute(text("ALTER TABLE concerts ADD COLUMN IF NOT EXISTS dismissed BOOLEAN DEFAULT FALSE"))
+            # Add AOTY columns to albums
+            conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS critic_score INTEGER"))
+            conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS aoty_url TEXT"))
+            # Create AOTY enrichment status table if needed
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS aoty_enrichment_status (
+                    id INTEGER PRIMARY KEY,
+                    status VARCHAR(50) DEFAULT 'idle',
+                    last_run_at TIMESTAMP,
+                    last_artist_id INTEGER,
+                    last_artist_name VARCHAR(500),
+                    albums_enriched INTEGER DEFAULT 0,
+                    total_albums_enriched INTEGER DEFAULT 0,
+                    error_message TEXT
+                )
+            """))
             conn.commit()
         except Exception as e:
             print(f"Migration note: {e}")
@@ -1004,6 +1060,65 @@ def get_new_releases(
         ))
     
     return result
+
+
+# ============ AOTY Enrichment Endpoints ============
+
+@app.get("/api/aoty-enrichment/status", response_model=AOTYEnrichmentStatusResponse)
+def get_aoty_enrichment_status(db: Session = Depends(get_db)):
+    """Get the current AOTY enrichment job status."""
+    service = AOTYService(db)
+    return service.get_or_create_enrichment_status()
+
+
+@app.post("/api/aoty-enrichment/run", response_model=AOTYEnrichmentStatusResponse)
+def run_aoty_enrichment(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger the AOTY enrichment job.
+    Processes one artist and enriches their missing albums with AOTY data.
+    """
+    service = AOTYService(db)
+    status = service.get_or_create_enrichment_status()
+    
+    # If already running, return current status
+    if status.status == "running":
+        return status
+    
+    # Start background enrichment
+    background_tasks.add_task(run_aoty_enrichment_in_background)
+    
+    return status
+
+
+@app.post("/api/artists/{artist_id}/enrich-aoty")
+def enrich_artist_aoty(
+    artist_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger AOTY enrichment for a specific artist.
+    Fetches critic scores and AOTY links for their missing albums.
+    Runs synchronously so the user sees immediate results.
+    """
+    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    
+    service = AOTYService(db)
+    
+    try:
+        enriched = service.enrich_artist_albums(artist)
+        return {
+            "status": "completed",
+            "artist": artist.name,
+            "enriched": enriched,
+            "message": f"Enriched {enriched} albums with AOTY data"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============ Downloads (slskd Integration) ============

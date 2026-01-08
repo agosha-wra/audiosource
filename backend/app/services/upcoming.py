@@ -321,4 +321,3 @@ class UpcomingReleasesService:
         
         self.db.commit()
         return status
-

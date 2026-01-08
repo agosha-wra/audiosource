@@ -36,6 +36,9 @@ class Album(Base):
     is_owned = Column(Boolean, default=True)  # True if we have it locally
     is_wishlisted = Column(Boolean, default=False)  # True if user wants this album
     is_scanned = Column(Boolean, default=False)
+    # AOTY (Album of the Year) data
+    critic_score = Column(Integer, nullable=True)  # 0-100 critic score from AOTY
+    aoty_url = Column(Text, nullable=True)  # Link to album page on AOTY
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -262,3 +265,17 @@ class UserSettings(Base):
     concert_city = Column(String(200), nullable=True)  # Filter concerts by this city
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AOTYEnrichmentStatus(Base):
+    """Status of the AOTY enrichment job that runs periodically."""
+    __tablename__ = "aoty_enrichment_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(50), default="idle")  # idle, running, completed, error
+    last_run_at = Column(DateTime, nullable=True)
+    last_artist_id = Column(Integer, nullable=True)  # Last artist processed (for round-robin)
+    last_artist_name = Column(String(500), nullable=True)
+    albums_enriched = Column(Integer, default=0)  # Total albums enriched in last run
+    total_albums_enriched = Column(Integer, default=0)  # Grand total
+    error_message = Column(Text, nullable=True)

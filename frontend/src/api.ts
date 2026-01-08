@@ -50,6 +50,10 @@ export async function deleteArtist(artistId: number): Promise<void> {
   await fetchApi(`/artists/${artistId}`, { method: 'DELETE' });
 }
 
+export async function enrichArtistAoty(artistId: number): Promise<{ status: string; artist: string; enriched: number; message: string }> {
+  return fetchApi(`/artists/${artistId}/enrich-aoty`, { method: 'POST' });
+}
+
 export async function getStats(): Promise<Stats> {
   return fetchApi<Stats>('/stats');
 }

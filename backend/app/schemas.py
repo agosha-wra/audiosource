@@ -61,6 +61,9 @@ class AlbumResponse(AlbumBase):
     is_owned: bool = True
     is_wishlisted: bool = False
     is_scanned: bool
+    # AOTY data
+    critic_score: Optional[int] = None
+    aoty_url: Optional[str] = None
     created_at: datetime
     artist: Optional[ArtistResponse] = None
 
@@ -182,6 +185,20 @@ class NewReleasesScrapeStatusResponse(BaseModel):
     last_scrape_at: Optional[datetime] = None
     next_scrape_at: Optional[datetime] = None
     albums_found: int
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AOTYEnrichmentStatusResponse(BaseModel):
+    id: int
+    status: str
+    last_run_at: Optional[datetime] = None
+    last_artist_id: Optional[int] = None
+    last_artist_name: Optional[str] = None
+    albums_enriched: int = 0
+    total_albums_enriched: int = 0
     error_message: Optional[str] = None
 
     class Config:

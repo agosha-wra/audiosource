@@ -23,6 +23,9 @@ export interface Album {
   is_owned: boolean;
   is_wishlisted: boolean;
   is_scanned: boolean;
+  // AOTY data
+  critic_score: number | null;
+  aoty_url: string | null;
   created_at: string;
   artist: Artist | null;
   tracks?: Track[];

@@ -84,6 +84,21 @@ export default function AlbumCard({
         <div className="album-meta">
           {album.release_date && <span>{album.release_date.substring(0, 4)}</span>}
           {album.release_type && <span>{album.release_type}</span>}
+          {album.critic_score !== null && album.critic_score !== undefined && (
+            <span 
+              className={`critic-score ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'}`}
+              title={album.aoty_url ? 'AOTY Critic Score (click to view on AOTY)' : 'AOTY Critic Score'}
+              onClick={(e) => {
+                if (album.aoty_url) {
+                  e.stopPropagation();
+                  window.open(album.aoty_url, '_blank');
+                }
+              }}
+              style={{ cursor: album.aoty_url ? 'pointer' : 'default' }}
+            >
+              {album.critic_score}
+            </span>
+          )}
         </div>
       </div>
     </div>
