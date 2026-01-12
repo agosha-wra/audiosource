@@ -1249,7 +1249,55 @@ body::before {
   }
 }
 
+/* Mobile Menu Button */
+.mobile-menu-btn {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 60;
+  width: 44px;
+  height: 44px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  box-shadow: var(--shadow-md);
+}
+
+.mobile-menu-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.mobile-menu-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Sidebar Overlay */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 40;
+  backdrop-filter: blur(4px);
+}
+
 @media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: flex;
+  }
+  
+  .sidebar-overlay {
+    display: block;
+  }
+  
   .app {
     grid-template-columns: 1fr;
   }
@@ -1259,10 +1307,19 @@ body::before {
     left: -280px;
     z-index: 50;
     transition: left var(--transition);
+    width: 280px;
   }
   
   .sidebar.open {
     left: 0;
+  }
+  
+  .header {
+    padding-left: 70px;
+  }
+  
+  .header h1 {
+    font-size: 20px;
   }
   
   .header {

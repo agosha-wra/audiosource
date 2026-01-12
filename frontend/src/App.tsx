@@ -113,6 +113,7 @@ function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isCheckingUpcoming, setIsCheckingUpcoming] = useState(false);
   const [wishlistKey, setWishlistKey] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Handle browser back/forward
   useEffect(() => {
@@ -224,6 +225,7 @@ function App() {
     setCurrentView(view);
     setCurrentArtistId(null);
     updateURL(view);
+    setSidebarOpen(false); // Close sidebar on mobile after navigation
   };
 
   const handleArtistClick = (artistId: number) => {
@@ -266,6 +268,29 @@ function App() {
 
   return (
     <div className="app">
+      {/* Mobile menu button */}
+      <button 
+        className="mobile-menu-btn"
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle menu"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          {sidebarOpen ? (
+            <path d="M18 6L6 18M6 6l12 12"/>
+          ) : (
+            <path d="M3 12h18M3 6h18M3 18h18"/>
+          )}
+        </svg>
+      </button>
+
+      {/* Overlay for mobile */}
+      {sidebarOpen && (
+        <div 
+          className="sidebar-overlay"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       <Sidebar
         currentView={currentView}
         stats={stats}
@@ -277,6 +302,7 @@ function App() {
         onScan={handleScan}
         onCheckUpcoming={handleCheckUpcoming}
         onCancelScan={handleCancelScan}
+        isOpen={sidebarOpen}
       />
       
       <main className="main">

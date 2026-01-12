@@ -11,6 +11,7 @@ interface SidebarProps {
   onScan: () => void;
   onCheckUpcoming: () => void;
   onCancelScan?: () => void;
+  isOpen?: boolean;
 }
 
 export default function Sidebar({ 
@@ -23,14 +24,15 @@ export default function Sidebar({
   onNavigate, 
   onScan,
   onCheckUpcoming,
-  onCancelScan
+  onCancelScan,
+  isOpen = false
 }: SidebarProps) {
   const progress = scanStatus && scanStatus.total_folders > 0
     ? (scanStatus.scanned_folders / scanStatus.total_folders) * 100
     : 0;
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
       <div className="logo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="12" cy="12" r="10"/>
