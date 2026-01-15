@@ -226,16 +226,17 @@ class AOTYService:
             self.db.refresh(status)
         return status
     
-    def search_artist_on_aoty(self, artist_name: str) -> Optional[str]:
+    def search_artist_on_aoty(self, artist_name: str, max_candidates: int = 3) -> List[str]:
         """
-        Search for an artist on AOTY and return their artist page URL.
-        Returns the URL path like "/artist/68701-geese/" or None.
+        Search for an artist on AOTY and return up to max_candidates artist page URLs.
+        Returns list of URL paths like ["/artist/68701-geese/", "/artist/123-geese/"].
+        Returns multiple candidates for generic names that might have multiple matches.
         """
         try:
             encoded_query = urllib.parse.quote(artist_name)
             search_url = f"{self.BASE_URL}/search/artists/?q={encoded_query}"
             
-            logger.info(f"[AOTY] Searching for artist: {artist_name}")
+            logger.info(f"[AOTY] Searching for artist: {artist_name} (up to {max_candidates} candidates)")
             
             scraper = self._create_scraper()
             response = scraper.get(search_url, timeout=30)
@@ -246,9 +247,11 @@ class AOTYService:
             
             if not artist_links:
                 logger.info(f"[AOTY] No artist results found for: {artist_name}")
-                return None
+                return []
             
             artist_lower = artist_name.lower().strip()
+            candidates = []
+            seen_urls = set()
             
             for link in artist_links:
                 link_text = link.get_text(strip=True).lower()
@@ -257,19 +260,30 @@ class AOTYService:
                 if not href or "/artist/" not in href:
                     continue
                 
+                # Skip duplicates
+                if href in seen_urls:
+                    continue
+                
+                # Check if name matches
                 if (artist_lower == link_text or 
                     artist_lower in link_text or 
                     link_text in artist_lower or
                     self._fuzzy_match(artist_lower, link_text, threshold=0.8)):
-                    logger.info(f"[AOTY] Found artist page: {href}")
-                    return href
+                    candidates.append(href)
+                    seen_urls.add(href)
+                    logger.info(f"[AOTY] Found artist candidate {len(candidates)}: {href}")
+                    
+                    if len(candidates) >= max_candidates:
+                        break
             
-            logger.info(f"[AOTY] No matching artist found for: {artist_name}")
-            return None
+            if not candidates:
+                logger.info(f"[AOTY] No matching artist found for: {artist_name}")
+            
+            return candidates
             
         except Exception as e:
             logger.error(f"[AOTY] Artist search error for {artist_name}: {e}")
-            return None
+            return []
     
     def scrape_artist_discography(self, artist_url: str) -> List[Dict[str, Any]]:
         """
@@ -361,10 +375,24 @@ class AOTYService:
         normalized = re.sub(r'[^\w\s]', '', normalized).strip()
         return normalized
     
+    def _count_album_matches(self, missing_albums: List[Album], aoty_albums: List[Dict[str, Any]]) -> int:
+        """Count how many of our albums match the AOTY discography."""
+        matches = 0
+        for album in missing_albums:
+            album_title_normalized = self._normalize_title(album.title)
+            for aoty_album in aoty_albums:
+                aoty_title_normalized = self._normalize_title(aoty_album.get("title", ""))
+                if (album_title_normalized == aoty_title_normalized or
+                    self._fuzzy_match(album_title_normalized, aoty_title_normalized, threshold=0.85)):
+                    matches += 1
+                    break
+        return matches
+
     def enrich_artist_albums(self, artist: Artist) -> int:
         """
         Enrich all missing albums for an artist with AOTY data.
-        Uses artist page approach: only 2 requests (search + artist page).
+        Tries multiple artist candidates if the name is generic (e.g., "Amen").
+        Picks the artist whose discography best matches our albums.
         """
         missing_albums = self.db.query(Album).filter(
             Album.artist_id == artist.id,
@@ -378,36 +406,62 @@ class AOTYService:
         
         logger.info(f"[AOTY] Enriching {len(missing_albums)} albums for {artist.name}")
         
-        # Step 1: Search for the artist to get their AOTY page URL
-        artist_url = self.search_artist_on_aoty(artist.name)
+        # Step 1: Search for artist candidates (up to 3 for generic names)
+        artist_urls = self.search_artist_on_aoty(artist.name, max_candidates=3)
         
-        if not artist_url:
+        if not artist_urls:
             logger.info(f"[AOTY] Could not find artist on AOTY: {artist.name}")
             for album in missing_albums:
                 album.aoty_url = ""  # Mark as checked
             self.db.commit()
             return 0
         
-        time.sleep(1)  # Small delay between requests
+        # Step 2: Try each artist candidate and find the best match
+        best_aoty_albums = None
+        best_match_count = 0
+        best_artist_url = None
         
-        # Step 2: Scrape the artist's page to get all albums with scores
-        aoty_albums = self.scrape_artist_discography(artist_url)
+        for i, artist_url in enumerate(artist_urls):
+            if i > 0:
+                time.sleep(1)  # Small delay between requests
+            
+            logger.info(f"[AOTY] Trying candidate {i+1}/{len(artist_urls)}: {artist_url}")
+            aoty_albums = self.scrape_artist_discography(artist_url)
+            
+            if not aoty_albums:
+                continue
+            
+            # Count how many of our albums match this candidate's discography
+            match_count = self._count_album_matches(missing_albums, aoty_albums)
+            logger.info(f"[AOTY] Candidate {i+1} has {match_count} matching albums")
+            
+            if match_count > best_match_count:
+                best_match_count = match_count
+                best_aoty_albums = aoty_albums
+                best_artist_url = artist_url
+            
+            # If first candidate has good matches, no need to try others
+            if match_count >= len(missing_albums) * 0.5:  # 50%+ match rate
+                logger.info(f"[AOTY] Good match found on candidate {i+1}, stopping search")
+                break
         
-        if not aoty_albums:
-            logger.info(f"[AOTY] No albums found on artist page for: {artist.name}")
+        if not best_aoty_albums or best_match_count == 0:
+            logger.info(f"[AOTY] No matching albums found for any artist candidate: {artist.name}")
             for album in missing_albums:
                 album.aoty_url = ""
             self.db.commit()
             return 0
         
-        # Step 3: Match our missing albums against AOTY albums
+        logger.info(f"[AOTY] Using best candidate: {best_artist_url} with {best_match_count} matches")
+        
+        # Step 3: Match our missing albums against the best candidate's albums
         enriched_count = 0
         
         for album in missing_albums:
             album_title_normalized = self._normalize_title(album.title)
             matched = False
             
-            for aoty_album in aoty_albums:
+            for aoty_album in best_aoty_albums:
                 aoty_title_normalized = self._normalize_title(aoty_album.get("title", ""))
                 
                 if (album_title_normalized == aoty_title_normalized or

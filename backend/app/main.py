@@ -1102,10 +1102,22 @@ def enrich_artist_aoty(
     Manually trigger AOTY enrichment for a specific artist.
     Fetches critic scores and AOTY links for their missing albums.
     Runs synchronously so the user sees immediate results.
+    
+    When manually triggered, also resets albums that were previously
+    checked but not found (aoty_url="") so they can be re-tried.
     """
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
+    
+    # Reset albums that were previously checked but not found
+    # This allows re-trying with the improved multi-candidate search
+    db.query(Album).filter(
+        Album.artist_id == artist_id,
+        Album.is_owned == False,
+        Album.aoty_url == ""  # Empty string means checked but not found
+    ).update({Album.aoty_url: None})
+    db.commit()
     
     service = AOTYService(db)
     
