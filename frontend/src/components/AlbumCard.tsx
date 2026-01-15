@@ -86,17 +86,23 @@ export default function AlbumCard({
           {album.release_type && <span>{album.release_type}</span>}
           {album.critic_score !== null && album.critic_score !== undefined && (
             <span 
-              className={`critic-score ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'}`}
-              title={album.aoty_url ? 'AOTY Critic Score (click to view on AOTY)' : 'AOTY Critic Score'}
+              className={`critic-score ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'} ${album.aoty_url ? 'has-link' : ''}`}
+              title={album.aoty_url ? 'View on AOTY' : 'AOTY Critic Score'}
               onClick={(e) => {
                 if (album.aoty_url) {
                   e.stopPropagation();
                   window.open(album.aoty_url, '_blank');
                 }
               }}
-              style={{ cursor: album.aoty_url ? 'pointer' : 'default' }}
             >
               {album.critic_score}
+              {album.aoty_url && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="aoty-link-icon">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/>
+                  <line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              )}
             </span>
           )}
         </div>

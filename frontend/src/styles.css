@@ -518,6 +518,9 @@ body::before {
 
 /* AOTY Critic Score Badge */
 .album-meta .critic-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
@@ -526,8 +529,23 @@ body::before {
   transition: var(--transition);
 }
 
-.album-meta .critic-score:hover {
-  transform: scale(1.05);
+.album-meta .critic-score.has-link {
+  cursor: pointer;
+}
+
+.album-meta .critic-score.has-link:hover {
+  transform: scale(1.08);
+  filter: brightness(1.1);
+}
+
+.album-meta .critic-score .aoty-link-icon {
+  width: 10px;
+  height: 10px;
+  opacity: 0.8;
+}
+
+.album-meta .critic-score.has-link:hover .aoty-link-icon {
+  opacity: 1;
 }
 
 .album-meta .critic-score.high {
