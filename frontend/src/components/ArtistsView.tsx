@@ -13,6 +13,8 @@ interface ArtistsViewProps {
   sort: string;
   onSortChange: (sort: string) => void;
   savedScrollPos: number;
+  shouldRestoreScroll: boolean;
+  onScrollRestored: () => void;
 }
 
 const SORT_OPTIONS = [
@@ -36,7 +38,9 @@ export default function ArtistsView({
   hasMore, 
   sort, 
   onSortChange,
-  savedScrollPos 
+  savedScrollPos,
+  shouldRestoreScroll,
+  onScrollRestored
 }: ArtistsViewProps) {
   const [loading, setLoading] = useState(!loaded);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -45,7 +49,6 @@ export default function ArtistsView({
   const [fetchStatus, setFetchStatus] = useState<UpcomingStatus | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const hasRestoredScroll = useRef(false);
 
   // Load artists if not already loaded or when sort changes
   useEffect(() => {
@@ -55,26 +58,22 @@ export default function ArtistsView({
     }
   }, [loaded, loadArtists]);
   
-  // Reset scroll restore flag when sort changes
-  useEffect(() => {
-    hasRestoredScroll.current = false;
-  }, [sort]);
-
   // Restore scroll position when returning to the list
   useEffect(() => {
-    if (loaded && !hasRestoredScroll.current && savedScrollPos > 0) {
-      // Small delay to ensure DOM is ready
-      requestAnimationFrame(() => {
+    if (loaded && shouldRestoreScroll && savedScrollPos > 0) {
+      // Use setTimeout to ensure DOM is fully ready after render
+      const timer = setTimeout(() => {
         const content = document.querySelector('.content');
         if (content) {
           content.scrollTop = savedScrollPos;
         } else {
           window.scrollTo(0, savedScrollPos);
         }
-        hasRestoredScroll.current = true;
-      });
+        onScrollRestored();
+      }, 50);
+      return () => clearTimeout(timer);
     }
-  }, [loaded, savedScrollPos]);
+  }, [loaded, shouldRestoreScroll, savedScrollPos, onScrollRestored]);
 
   // Load more when scrolling
   const loadMore = useCallback(async () => {

@@ -120,7 +120,8 @@ function App() {
   const [artistsLoaded, setArtistsLoaded] = useState(false);
   const [artistsSort, setArtistsSort] = useState('name');
   const [artistsHasMore, setArtistsHasMore] = useState(true);
-  const artistsScrollPos = useRef(0);
+  const [artistsScrollPos, setArtistsScrollPos] = useState(0);
+  const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
 
   // Handle browser back/forward
   useEffect(() => {
@@ -237,7 +238,9 @@ function App() {
 
   const handleArtistClick = (artistId: number) => {
     // Save scroll position before navigating
-    artistsScrollPos.current = document.querySelector('.content')?.scrollTop || window.scrollY;
+    const scrollPos = document.querySelector('.content')?.scrollTop || window.scrollY;
+    setArtistsScrollPos(scrollPos);
+    setShouldRestoreScroll(true);
     setCurrentArtistId(artistId);
     setCurrentView('artist-detail');
     updateURL('artist-detail', artistId);
@@ -364,7 +367,9 @@ function App() {
             hasMore={artistsHasMore}
             sort={artistsSort}
             onSortChange={handleArtistsSortChange}
-            savedScrollPos={artistsScrollPos.current}
+            savedScrollPos={artistsScrollPos}
+            shouldRestoreScroll={shouldRestoreScroll}
+            onScrollRestored={() => setShouldRestoreScroll(false)}
           />
         )}
         
