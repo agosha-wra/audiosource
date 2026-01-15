@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Artist, UpcomingStatus } from '../types';
-import { getArtists, deleteArtist, fetchMissingAlbums, getUpcomingStatus } from '../api';
+import { deleteArtist, fetchMissingAlbums, getUpcomingStatus, getArtists } from '../api';
 
 interface ArtistsViewProps {
   onArtistClick: (artistId: number) => void;
+  artists: Artist[];
+  setArtists: (artists: Artist[]) => void;
+  loaded: boolean;
+  loadArtists: () => Promise<void>;
+  loadMoreArtists: () => Promise<void>;
+  hasMore: boolean;
+  sort: string;
+  onSortChange: (sort: string) => void;
+  savedScrollPos: number;
 }
-
-const ARTISTS_PER_PAGE = 100;
 
 const SORT_OPTIONS = [
   { value: 'name', label: 'Name (A-Z)' },
@@ -19,51 +26,68 @@ function getInitials(name: string): string {
   return name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
 }
 
-export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
-  const [artists, setArtists] = useState<Artist[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function ArtistsView({ 
+  onArtistClick, 
+  artists, 
+  setArtists, 
+  loaded, 
+  loadArtists, 
+  loadMoreArtists, 
+  hasMore, 
+  sort, 
+  onSortChange,
+  savedScrollPos 
+}: ArtistsViewProps) {
+  const [loading, setLoading] = useState(!loaded);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [sort, setSort] = useState('name');
   const [deleting, setDeleting] = useState<Set<number>>(new Set());
   const [fetchingMissing, setFetchingMissing] = useState(false);
   const [fetchStatus, setFetchStatus] = useState<UpcomingStatus | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const hasRestoredScroll = useRef(false);
 
-  // Fetch initial artists or when sort changes
+  // Load artists if not already loaded or when sort changes
   useEffect(() => {
-    const fetchArtists = async () => {
+    if (!loaded) {
       setLoading(true);
-      try {
-        const data = await getArtists(0, ARTISTS_PER_PAGE, sort);
-        setArtists(data);
-        setHasMore(data.length === ARTISTS_PER_PAGE);
-      } catch (error) {
-        console.error('Error fetching artists:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchArtists();
+      loadArtists().finally(() => setLoading(false));
+    }
+  }, [loaded, loadArtists]);
+  
+  // Reset scroll restore flag when sort changes
+  useEffect(() => {
+    hasRestoredScroll.current = false;
   }, [sort]);
 
-  // Load more artists when scrolling
+  // Restore scroll position when returning to the list
+  useEffect(() => {
+    if (loaded && !hasRestoredScroll.current && savedScrollPos > 0) {
+      // Small delay to ensure DOM is ready
+      requestAnimationFrame(() => {
+        const content = document.querySelector('.content');
+        if (content) {
+          content.scrollTop = savedScrollPos;
+        } else {
+          window.scrollTo(0, savedScrollPos);
+        }
+        hasRestoredScroll.current = true;
+      });
+    }
+  }, [loaded, savedScrollPos]);
+
+  // Load more when scrolling
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     
     setLoadingMore(true);
     try {
-      const data = await getArtists(artists.length, ARTISTS_PER_PAGE, sort);
-      setArtists(prev => [...prev, ...data]);
-      setHasMore(data.length === ARTISTS_PER_PAGE);
-    } catch (error) {
-      console.error('Error loading more artists:', error);
+      await loadMoreArtists();
     } finally {
       setLoadingMore(false);
     }
-  }, [artists.length, hasMore, loadingMore, sort]);
+  }, [hasMore, loadingMore, loadMoreArtists]);
 
   // Intersection observer for infinite scroll
   useEffect(() => {
@@ -137,9 +161,7 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
         if (status.status === 'completed' || status.status === 'error' || status.status === 'idle') {
           setFetchingMissing(false);
           // Refresh artists list
-          const data = await getArtists(0, ARTISTS_PER_PAGE, sort);
-          setArtists(data);
-          setHasMore(data.length === ARTISTS_PER_PAGE);
+          loadArtists();
         }
       } catch (error) {
         console.error('Error checking fetch status:', error);
@@ -147,7 +169,7 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [fetchingMissing, sort]);
+  }, [fetchingMissing, loadArtists]);
 
   return (
     <>
@@ -179,7 +201,7 @@ export default function ArtistsView({ onArtistClick }: ArtistsViewProps) {
           <select 
             className="sort-select" 
             value={sort} 
-            onChange={(e) => setSort(e.target.value)}
+            onChange={(e) => onSortChange(e.target.value)}
           >
             {SORT_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>{option.label}</option>

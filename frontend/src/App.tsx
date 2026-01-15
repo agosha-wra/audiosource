@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { View, Stats, ScanStatus, UpcomingStatus } from './types';
-import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, getUpcomingStatus } from './api';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { View, Stats, ScanStatus, UpcomingStatus, Artist } from './types';
+import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, getUpcomingStatus, getArtists } from './api';
 import Sidebar from './components/Sidebar';
 import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
@@ -114,6 +114,13 @@ function App() {
   const [isCheckingUpcoming, setIsCheckingUpcoming] = useState(false);
   const [wishlistKey, setWishlistKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  
+  // Artists state - persisted across navigation
+  const [artists, setArtists] = useState<Artist[]>([]);
+  const [artistsLoaded, setArtistsLoaded] = useState(false);
+  const [artistsSort, setArtistsSort] = useState('name');
+  const [artistsHasMore, setArtistsHasMore] = useState(true);
+  const artistsScrollPos = useRef(0);
 
   // Handle browser back/forward
   useEffect(() => {
@@ -229,10 +236,46 @@ function App() {
   };
 
   const handleArtistClick = (artistId: number) => {
+    // Save scroll position before navigating
+    artistsScrollPos.current = document.querySelector('.content')?.scrollTop || window.scrollY;
     setCurrentArtistId(artistId);
     setCurrentView('artist-detail');
     updateURL('artist-detail', artistId);
   };
+  
+  // Load artists (initial or when sort changes)
+  const loadArtists = useCallback(async (reset = false) => {
+    try {
+      const data = await getArtists(0, 100, artistsSort);
+      setArtists(data);
+      setArtistsHasMore(data.length === 100);
+      setArtistsLoaded(true);
+    } catch (error) {
+      console.error('Error fetching artists:', error);
+    }
+  }, [artistsSort]);
+  
+  // Load more artists for infinite scroll
+  const loadMoreArtists = useCallback(async () => {
+    try {
+      const data = await getArtists(artists.length, 100, artistsSort);
+      setArtists(prev => [...prev, ...data]);
+      setArtistsHasMore(data.length === 100);
+    } catch (error) {
+      console.error('Error loading more artists:', error);
+    }
+  }, [artists.length, artistsSort]);
+  
+  // Handle artist sort change
+  const handleArtistsSortChange = useCallback((newSort: string) => {
+    setArtistsSort(newSort);
+    setArtistsLoaded(false); // Force reload
+  }, []);
+  
+  // Update artists list (called after delete, etc.)
+  const updateArtistsList = useCallback((newArtists: Artist[]) => {
+    setArtists(newArtists);
+  }, []);
 
   const handleAlbumClick = (albumId: number) => {
     setSelectedAlbumId(albumId);
@@ -311,7 +354,18 @@ function App() {
         )}
         
         {currentView === 'artists' && (
-          <ArtistsView onArtistClick={handleArtistClick} />
+          <ArtistsView 
+            onArtistClick={handleArtistClick}
+            artists={artists}
+            setArtists={updateArtistsList}
+            loaded={artistsLoaded}
+            loadArtists={loadArtists}
+            loadMoreArtists={loadMoreArtists}
+            hasMore={artistsHasMore}
+            sort={artistsSort}
+            onSortChange={handleArtistsSortChange}
+            savedScrollPos={artistsScrollPos.current}
+          />
         )}
         
         {currentView === 'artist-detail' && currentArtistId && (
