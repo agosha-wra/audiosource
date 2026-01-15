@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { View, Stats, ScanStatus, UpcomingStatus, Artist } from './types';
 import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, getUpcomingStatus, getArtists } from './api';
 import Sidebar from './components/Sidebar';
