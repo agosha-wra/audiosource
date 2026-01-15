@@ -244,7 +244,7 @@ function App() {
   };
   
   // Load artists (initial or when sort changes)
-  const loadArtists = useCallback(async (reset = false) => {
+  const loadArtists = useCallback(async () => {
     try {
       const data = await getArtists(0, 100, artistsSort);
       setArtists(data);

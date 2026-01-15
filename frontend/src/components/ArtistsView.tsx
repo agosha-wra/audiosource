@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Artist, UpcomingStatus } from '../types';
-import { deleteArtist, fetchMissingAlbums, getUpcomingStatus, getArtists } from '../api';
+import { deleteArtist, fetchMissingAlbums, getUpcomingStatus } from '../api';
 
 interface ArtistsViewProps {
   onArtistClick: (artistId: number) => void;
@@ -45,7 +45,6 @@ export default function ArtistsView({
   const [fetchStatus, setFetchStatus] = useState<UpcomingStatus | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const hasRestoredScroll = useRef(false);
 
   // Load artists if not already loaded or when sort changes
