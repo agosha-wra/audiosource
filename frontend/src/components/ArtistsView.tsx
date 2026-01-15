@@ -63,12 +63,7 @@ export default function ArtistsView({
     if (loaded && shouldRestoreScroll && savedScrollPos > 0) {
       // Use setTimeout to ensure DOM is fully ready after render
       const timer = setTimeout(() => {
-        const content = document.querySelector('.content');
-        if (content) {
-          content.scrollTop = savedScrollPos;
-        } else {
-          window.scrollTo(0, savedScrollPos);
-        }
+        window.scrollTo(0, savedScrollPos);
         onScrollRestored();
       }, 50);
       return () => clearTimeout(timer);

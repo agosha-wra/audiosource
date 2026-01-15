@@ -237,9 +237,8 @@ function App() {
   };
 
   const handleArtistClick = (artistId: number) => {
-    // Save scroll position before navigating
-    const scrollPos = document.querySelector('.content')?.scrollTop || window.scrollY;
-    setArtistsScrollPos(scrollPos);
+    // Save scroll position before navigating (window is the scroll container)
+    setArtistsScrollPos(window.scrollY);
     setShouldRestoreScroll(true);
     setCurrentArtistId(artistId);
     setCurrentView('artist-detail');
