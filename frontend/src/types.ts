@@ -26,9 +26,6 @@ export interface Album {
   // AOTY data
   critic_score: number | null;
   aoty_url: string | null;
-  // RYM data
-  rym_score: number | null;
-  rym_url: string | null;
   created_at: string;
   artist: Artist | null;
   tracks?: Track[];

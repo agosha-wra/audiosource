@@ -40,21 +40,19 @@ export default function ArtistDetailView({ artistId, onBack, onAlbumClick }: Art
     fetchData();
   }, [artistId]);
 
-  const handleEnrichScores = async () => {
+  const handleEnrichAoty = async () => {
     if (enriching) return;
     setEnriching(true);
     setEnrichResult(null);
     
     try {
       const result = await enrichArtistAoty(artistId);
-      const aotyCount = result.aoty_enriched || result.enriched || 0;
-      const rymCount = result.rym_enriched || 0;
-      setEnrichResult(`✓ Enriched: ${aotyCount} AOTY, ${rymCount} RYM`);
+      setEnrichResult(`✓ Enriched ${result.enriched} albums with AOTY scores`);
       // Refresh the albums to show the new scores
       await fetchData();
     } catch (error) {
-      console.error('Error enriching scores:', error);
-      setEnrichResult('✗ Failed to fetch scores');
+      console.error('Error enriching with AOTY:', error);
+      setEnrichResult('✗ Failed to fetch AOTY data');
     } finally {
       setEnriching(false);
       // Clear the message after 5 seconds
@@ -144,9 +142,9 @@ export default function ArtistDetailView({ artistId, onBack, onAlbumClick }: Art
               </h3>
               <button 
                 className={`aoty-enrich-btn ${enriching ? 'loading' : ''}`}
-                onClick={handleEnrichScores}
+                onClick={handleEnrichAoty}
                 disabled={enriching}
-                title="Fetch scores from AOTY and RYM"
+                title="Fetch critic scores from Album of the Year"
               >
                 {enriching ? (
                   <>
@@ -158,7 +156,7 @@ export default function ArtistDetailView({ artistId, onBack, onAlbumClick }: Art
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
                     </svg>
-                    Get Scores
+                    Get AOTY Scores
                   </>
                 )}
               </button>

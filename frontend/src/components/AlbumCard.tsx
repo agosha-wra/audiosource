@@ -84,10 +84,9 @@ export default function AlbumCard({
         <div className="album-meta">
           {album.release_date && <span>{album.release_date.substring(0, 4)}</span>}
           {album.release_type && <span>{album.release_type}</span>}
-          {/* AOTY Score */}
           {album.critic_score !== null && album.critic_score !== undefined && (
             <span 
-              className={`critic-score aoty ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'} ${album.aoty_url ? 'has-link' : ''}`}
+              className={`critic-score ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'} ${album.aoty_url ? 'has-link' : ''}`}
               title={album.aoty_url ? 'View on AOTY' : 'AOTY Critic Score'}
               onClick={(e) => {
                 if (album.aoty_url) {
@@ -96,33 +95,9 @@ export default function AlbumCard({
                 }
               }}
             >
-              <span className="score-label">A</span>
               {album.critic_score}
               {album.aoty_url && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="score-link-icon">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                  <polyline points="15 3 21 3 21 9"/>
-                  <line x1="10" y1="14" x2="21" y2="3"/>
-                </svg>
-              )}
-            </span>
-          )}
-          {/* RYM Score */}
-          {album.rym_score !== null && album.rym_score !== undefined && (
-            <span 
-              className={`critic-score rym ${album.rym_score >= 80 ? 'high' : album.rym_score >= 60 ? 'medium' : 'low'} ${album.rym_url ? 'has-link' : ''}`}
-              title={album.rym_url ? 'View on RYM' : 'RYM Score'}
-              onClick={(e) => {
-                if (album.rym_url) {
-                  e.stopPropagation();
-                  window.open(album.rym_url, '_blank');
-                }
-              }}
-            >
-              <span className="score-label">R</span>
-              {album.rym_score}
-              {album.rym_url && (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="score-link-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="aoty-link-icon">
                   <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                   <polyline points="15 3 21 3 21 9"/>
                   <line x1="10" y1="14" x2="21" y2="3"/>
