@@ -37,6 +37,7 @@ from app.services.scanner import ScannerService
 from app.services.musicbrainz import MusicBrainzService
 from app.services.upcoming import UpcomingReleasesService
 from app.services.aoty import AOTYService
+from app.services.rym import RYMService
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -119,25 +120,41 @@ def run_concert_scrape_in_background():
         print("[CONCERTS] Background task finished")
 
 
-# Forward declare AOTY enrichment function
+# Forward declare AOTY/RYM enrichment function
 _aoty_enrichment_lock = threading.Lock()
 
 def run_aoty_enrichment_in_background():
-    """Run the AOTY enrichment job in a background thread."""
-    print("[AOTY] Enrichment background task started")
+    """Run the AOTY enrichment job in a background thread (also does RYM)."""
+    print("[ENRICHMENT] Background task started (AOTY + RYM)")
     db = SessionLocal()
     try:
         with _aoty_enrichment_lock:
-            service = AOTYService(db)
-            result = service.run_enrichment_job()
-            print(f"[AOTY] Enrichment result: {result}")
+            # Run AOTY enrichment
+            aoty_service = AOTYService(db)
+            aoty_result = aoty_service.run_enrichment_job()
+            print(f"[AOTY] Enrichment result: {aoty_result}")
+            
+            # Run RYM enrichment for the same artist if AOTY found one
+            if aoty_result.get("status") == "completed" and aoty_result.get("artist"):
+                import time
+                time.sleep(3)  # Be respectful between services
+                
+                # Get the artist that was just enriched
+                artist = db.query(Artist).filter(Artist.name == aoty_result["artist"]).first()
+                if artist:
+                    rym_service = RYMService(db)
+                    try:
+                        rym_enriched = rym_service.enrich_artist_albums(artist)
+                        print(f"[RYM] Enrichment completed for {artist.name}: {rym_enriched} albums enriched")
+                    except Exception as e:
+                        print(f"[RYM] Enrichment error: {e}")
     except Exception as e:
         import traceback
-        print(f"[AOTY] Enrichment background task error: {e}")
-        print(f"[AOTY] Traceback: {traceback.format_exc()}")
+        print(f"[ENRICHMENT] Background task error: {e}")
+        print(f"[ENRICHMENT] Traceback: {traceback.format_exc()}")
     finally:
         db.close()
-        print("[AOTY] Enrichment background task finished")
+        print("[ENRICHMENT] Background task finished")
 
 
 async def scheduled_scan_loop():
@@ -258,6 +275,9 @@ async def startup_event():
             # Add AOTY columns to albums
             conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS critic_score INTEGER"))
             conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS aoty_url TEXT"))
+            # Add RYM columns to albums
+            conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS rym_score INTEGER"))
+            conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS rym_url TEXT"))
             # Create AOTY enrichment status table if needed
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS aoty_enrichment_status (
@@ -1093,44 +1113,81 @@ def run_aoty_enrichment(
     return status
 
 
+@app.post("/api/artists/{artist_id}/enrich-scores")
+def enrich_artist_scores(
+    artist_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger AOTY and RYM enrichment for a specific artist.
+    Fetches scores and links from both services for their missing albums.
+    Runs synchronously so the user sees immediate results.
+    
+    When manually triggered, also resets albums that were previously
+    checked but not found (url="") so they can be re-tried.
+    """
+    import time
+    
+    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    
+    # Reset albums that were previously checked but not found for AOTY
+    db.query(Album).filter(
+        Album.artist_id == artist_id,
+        Album.is_owned == False,
+        Album.aoty_url == ""  # Empty string means checked but not found
+    ).update({Album.aoty_url: None})
+    
+    # Reset albums that were previously checked but not found for RYM
+    db.query(Album).filter(
+        Album.artist_id == artist_id,
+        Album.is_owned == False,
+        Album.rym_url == ""  # Empty string means checked but not found
+    ).update({Album.rym_url: None})
+    
+    db.commit()
+    
+    aoty_enriched = 0
+    rym_enriched = 0
+    
+    # AOTY enrichment
+    try:
+        aoty_service = AOTYService(db)
+        aoty_enriched = aoty_service.enrich_artist_albums(artist)
+    except Exception as e:
+        print(f"[AOTY] Error enriching {artist.name}: {e}")
+    
+    # Small delay between services
+    time.sleep(2)
+    
+    # RYM enrichment
+    try:
+        rym_service = RYMService(db)
+        rym_enriched = rym_service.enrich_artist_albums(artist)
+    except Exception as e:
+        print(f"[RYM] Error enriching {artist.name}: {e}")
+    
+    return {
+        "status": "completed",
+        "artist": artist.name,
+        "aoty_enriched": aoty_enriched,
+        "rym_enriched": rym_enriched,
+        "enriched": max(aoty_enriched, rym_enriched),  # For backwards compatibility
+        "message": f"Enriched albums: {aoty_enriched} with AOTY, {rym_enriched} with RYM"
+    }
+
+
+# Keep old endpoint for backwards compatibility
 @app.post("/api/artists/{artist_id}/enrich-aoty")
 def enrich_artist_aoty(
     artist_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    Manually trigger AOTY enrichment for a specific artist.
-    Fetches critic scores and AOTY links for their missing albums.
-    Runs synchronously so the user sees immediate results.
-    
-    When manually triggered, also resets albums that were previously
-    checked but not found (aoty_url="") so they can be re-tried.
+    Alias for enrich-scores endpoint (backwards compatibility).
     """
-    artist = db.query(Artist).filter(Artist.id == artist_id).first()
-    if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
-    
-    # Reset albums that were previously checked but not found
-    # This allows re-trying with the improved multi-candidate search
-    db.query(Album).filter(
-        Album.artist_id == artist_id,
-        Album.is_owned == False,
-        Album.aoty_url == ""  # Empty string means checked but not found
-    ).update({Album.aoty_url: None})
-    db.commit()
-    
-    service = AOTYService(db)
-    
-    try:
-        enriched = service.enrich_artist_albums(artist)
-        return {
-            "status": "completed",
-            "artist": artist.name,
-            "enriched": enriched,
-            "message": f"Enriched {enriched} albums with AOTY data"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return enrich_artist_scores(artist_id, db)
 
 
 # ============ Downloads (slskd Integration) ============

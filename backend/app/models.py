@@ -39,6 +39,9 @@ class Album(Base):
     # AOTY (Album of the Year) data
     critic_score = Column(Integer, nullable=True)  # 0-100 critic score from AOTY
     aoty_url = Column(Text, nullable=True)  # Link to album page on AOTY
+    # RYM (Rate Your Music) data
+    rym_score = Column(Integer, nullable=True)  # 0-100 score from RYM (converted from 0-5)
+    rym_url = Column(Text, nullable=True)  # Link to album page on RYM
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
