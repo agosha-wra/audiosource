@@ -50,7 +50,7 @@ export async function deleteArtist(artistId: number): Promise<void> {
   await fetchApi(`/artists/${artistId}`, { method: 'DELETE' });
 }
 
-export async function enrichArtistAoty(artistId: number): Promise<{ status: string; artist: string; enriched: number; message: string }> {
+export async function enrichArtistAoty(artistId: number): Promise<{ status: string; artist: string; enriched: number; aoty_enriched?: number; rym_enriched?: number; message: string }> {
   return fetchApi(`/artists/${artistId}/enrich-aoty`, { method: 'POST' });
 }
 
