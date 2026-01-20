@@ -287,6 +287,14 @@ function App() {
     setSelectedAlbumId(null);
   };
 
+  const handleAlbumDeleted = () => {
+    refreshStats();
+    // Reload artists if we're on the artists view (album counts may have changed)
+    if (currentView === 'artists' || currentView === 'artist-detail') {
+      setArtistsLoaded(false); // Force reload of artists list
+    }
+  };
+
   const handleBackToArtists = () => {
     setCurrentView('artists');
     setCurrentArtistId(null);
@@ -415,7 +423,11 @@ function App() {
       </main>
 
       {selectedAlbumId !== null && (
-        <AlbumModal albumId={selectedAlbumId} onClose={handleCloseModal} />
+        <AlbumModal 
+          albumId={selectedAlbumId} 
+          onClose={handleCloseModal} 
+          onDeleted={handleAlbumDeleted}
+        />
       )}
 
       {showSearchModal && (

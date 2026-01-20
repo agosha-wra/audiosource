@@ -30,6 +30,10 @@ export async function getAlbum(id: number): Promise<Album> {
   return fetchApi<Album>(`/albums/${id}`);
 }
 
+export async function deleteAlbum(id: number): Promise<void> {
+  await fetchApi(`/albums/${id}`, { method: 'DELETE' });
+}
+
 export async function getArtists(skip = 0, limit = 100, sort = 'name'): Promise<Artist[]> {
   const params = new URLSearchParams();
   params.set('skip', skip.toString());

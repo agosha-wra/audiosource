@@ -357,6 +357,48 @@ def get_album(album_id: int, db: Session = Depends(get_db)):
     return album
 
 
+@app.delete("/api/albums/{album_id}")
+def delete_album(album_id: int, db: Session = Depends(get_db)):
+    """
+    Delete an album and its folder/files from the filesystem.
+    If the artist has no albums left and no wishlisted items, delete the artist too.
+    """
+    import shutil
+    import os
+    
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    artist_id = album.artist_id
+    folder_path = album.folder_path
+    
+    # Delete the folder and files from filesystem if it exists
+    if folder_path and os.path.exists(folder_path):
+        try:
+            shutil.rmtree(folder_path)
+        except Exception as e:
+            print(f"Error deleting album folder {folder_path}: {e}")
+            # Continue with database deletion even if filesystem delete fails
+    
+    # Delete the album from database (tracks are cascade deleted via relationship)
+    db.delete(album)
+    db.commit()
+    
+    # Check if artist should be deleted (no albums left and no wishlisted items)
+    if artist_id:
+        remaining_albums = db.query(Album).filter(Album.artist_id == artist_id).count()
+        if remaining_albums == 0:
+            # Artist has no albums left, delete the artist
+            artist = db.query(Artist).filter(Artist.id == artist_id).first()
+            if artist:
+                db.delete(artist)
+                db.commit()
+                return {"message": "Album and artist deleted"}
+    
+    return {"message": "Album deleted"}
+
+
 @app.post("/api/albums/refresh-covers")
 def refresh_album_covers(
     force: bool = False,
