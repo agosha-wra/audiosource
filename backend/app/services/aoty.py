@@ -87,8 +87,15 @@ class AOTYService:
                 try:
                     release_data = self._parse_album_block(block, year, week)
                     if release_data:
-                        self._save_release(release_data)
-                        albums_found += 1
+                        # Only save LPs with critic scores
+                        release_type = (release_data.get("release_type") or "").upper()
+                        has_score = release_data.get("critic_score") is not None
+                        
+                        if release_type == "LP" and has_score:
+                            self._save_release(release_data)
+                            albums_found += 1
+                        else:
+                            logger.debug(f"[AOTY] Skipping: {release_data.get('album_title')} (type={release_type}, has_score={has_score})")
                 except Exception as e:
                     logger.warning(f"[AOTY] Error parsing album block: {e}")
             

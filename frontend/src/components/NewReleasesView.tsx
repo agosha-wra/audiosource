@@ -62,6 +62,7 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
   const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
   const [wishlisted, setWishlisted] = useState<Set<number>>(new Set());
   const [addingToWishlist, setAddingToWishlist] = useState<Set<number>>(new Set());
+  const [minReviews, setMinReviews] = useState(0);
 
   const fetchReleases = useCallback(async (year: number, week: number) => {
     setLoading(true);
@@ -213,7 +214,7 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
         <div className="header-title-group">
           <h1>New Releases</h1>
           <span className="header-subtitle">
-            Top albums by critic score from AOTY
+            Top albums by popularity from AOTY
           </span>
         </div>
         <div className="header-actions">
@@ -277,6 +278,21 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
             Today
           </button>
         )}
+        
+        <div className="reviews-filter">
+          <span className="filter-label">Min reviews:</span>
+          <div className="filter-buttons">
+            {[0, 1, 2, 3, 5, 10].map((n) => (
+              <button
+                key={n}
+                className={`filter-btn ${minReviews === n ? 'active' : ''}`}
+                onClick={() => setMinReviews(n)}
+              >
+                {n === 0 ? 'All' : `${n}+`}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       
       <div className="content">
@@ -284,26 +300,41 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
           <div className="loading">
             <div className="loading-spinner" />
           </div>
-        ) : releases.length === 0 ? (
-          <div className="empty-state">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M9 19V6l12-3v13"/>
-              <circle cx="6" cy="18" r="3"/>
-              <circle cx="18" cy="16" r="3"/>
-            </svg>
-            <h2>No releases for this week</h2>
-            <p>Click refresh to fetch releases from Album of the Year.</p>
-            <button className="primary-btn" onClick={handleScrape} disabled={isScraping}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                <path d="M12 8v4l2 2"/>
+        ) : (() => {
+          // Filter releases by minimum reviews
+          const filteredReleases = releases.filter(r => 
+            minReviews === 0 || (r.num_critics !== null && r.num_critics >= minReviews)
+          );
+          
+          return filteredReleases.length === 0 ? (
+            <div className="empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M9 19V6l12-3v13"/>
+                <circle cx="6" cy="18" r="3"/>
+                <circle cx="18" cy="16" r="3"/>
               </svg>
-              <span>{isScraping ? 'Fetching...' : 'Fetch Releases'}</span>
-            </button>
-          </div>
-        ) : (
-          <div className="new-releases-grid">
-            {releases.map((release, index) => (
+              {releases.length === 0 ? (
+                <>
+                  <h2>No releases for this week</h2>
+                  <p>Click refresh to fetch releases from Album of the Year.</p>
+                  <button className="primary-btn" onClick={handleScrape} disabled={isScraping}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      <path d="M12 8v4l2 2"/>
+                    </svg>
+                    <span>{isScraping ? 'Fetching...' : 'Fetch Releases'}</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h2>No releases match filter</h2>
+                  <p>Try lowering the minimum reviews filter.</p>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="new-releases-grid">
+              {filteredReleases.map((release, index) => (
               <div key={release.id} className="new-release-row">
                 <a
                   href={release.aoty_url}
@@ -385,8 +416,9 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
                 </button>
               </div>
             ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
       </div>
     </>
   );
