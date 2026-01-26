@@ -72,7 +72,7 @@ class AOTYService:
         self.db.commit()
         
         try:
-            url = f"{self.BASE_URL}/week/{year}/{week}/releases/?sort=critic"
+            url = f"{self.BASE_URL}/week/{year}/{week}/releases/?sort=popular"
             logger.info(f"[AOTY] Scraping {url}")
             
             scraper = self._create_scraper()
