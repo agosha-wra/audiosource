@@ -238,6 +238,15 @@ class SlskdService:
             self.db.commit()
             return download
         
+        # Clean up files from any previous failed/cancelled downloads for this album
+        previous_downloads = self.db.query(Download).filter(
+            Download.album_id == download.album_id,
+            Download.id != download.id,
+            Download.status.in_(["failed", "cancelled"])
+        ).all()
+        for prev_download in previous_downloads:
+            self._cleanup_download_files(prev_download)
+        
         artist_name = album.artist.name if album.artist else "Unknown Artist"
         album_title = album.title
         expected_tracks = album.track_count or 0
@@ -534,15 +543,21 @@ class SlskdService:
                             success_rate = completed_files / total_files if total_files > 0 else 0
                             
                             if completed_files == 0:
-                                # All files failed
+                                # All files failed - cleanup downloaded files
                                 download.status = "failed"
                                 download.error_message = f"All {failed_files} files failed to download"
                                 download.completed_at = datetime.utcnow()
+                                self.db.commit()
+                                self._cleanup_download_files(download)
+                                return download
                             elif success_rate < 0.5:
-                                # Less than 50% success - mark as failed
+                                # Less than 50% success - mark as failed and cleanup
                                 download.status = "failed"
                                 download.error_message = f"Only {completed_files} of {total_files} files downloaded ({int(success_rate*100)}%)"
                                 download.completed_at = datetime.utcnow()
+                                self.db.commit()
+                                self._cleanup_download_files(download)
+                                return download
                             elif failed_files > 0:
                                 # Majority succeeded but some failed - completed with warning, NO auto-move
                                 download.status = "completed"
@@ -613,7 +628,64 @@ class SlskdService:
         download.error_message = "Cancelled by user"
         self.db.commit()
         
+        # Clean up any downloaded files
+        self._cleanup_download_files(download)
+        
         return download
+    
+    def _cleanup_download_files(self, download: Download) -> int:
+        """
+        Clean up downloaded files for a failed/cancelled download.
+        Removes files from the slskd download directory to prevent duplicates.
+        Returns the number of files deleted.
+        """
+        if not download.slskd_username:
+            return 0
+        
+        try:
+            download_dir = Path(slskd_config.download_dir)
+            user_dir = download_dir / download.slskd_username
+            
+            if not user_dir.exists():
+                return 0
+            
+            # Find and delete audio files matching this album
+            deleted_count = 0
+            artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
+            album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
+            
+            dirs_to_check = []
+            for root, dirs, files in os.walk(user_dir):
+                path_lower = root.lower()
+                # Check if this directory matches the artist/album
+                if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
+                    for file in files:
+                        if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
+                            file_path = Path(root) / file
+                            try:
+                                file_path.unlink()
+                                deleted_count += 1
+                            except Exception as e:
+                                print(f"slskd: Error deleting {file_path}: {e}")
+                    dirs_to_check.append(root)
+            
+            # Clean up empty directories
+            for dir_path in sorted(dirs_to_check, key=len, reverse=True):
+                try:
+                    dir_obj = Path(dir_path)
+                    if dir_obj.exists() and not any(dir_obj.iterdir()):
+                        dir_obj.rmdir()
+                except Exception:
+                    pass
+            
+            if deleted_count > 0:
+                print(f"slskd: Cleaned up {deleted_count} files from failed download {download.id}")
+            
+            return deleted_count
+            
+        except Exception as e:
+            print(f"slskd: Error cleaning up download files: {e}")
+            return 0
     
     def check_and_timeout_downloads(self, timeout_minutes: int = 5) -> int:
         """Check for downloads that have been running too long and cancel them."""
@@ -640,6 +712,7 @@ class SlskdService:
                 download.status = "failed"
                 download.error_message = f"Timed out after {timeout_minutes} minutes (stuck in {download.status})"
                 cancelled_count += 1
+                self._cleanup_download_files(download)
         
         if cancelled_count > 0:
             self.db.commit()
