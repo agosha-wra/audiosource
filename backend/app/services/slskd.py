@@ -238,11 +238,11 @@ class SlskdService:
             self.db.commit()
             return download
         
-        # Clean up files from any previous failed/cancelled downloads for this album
+        # Clean up files from any previous failed/cancelled/pending downloads for this album
         previous_downloads = self.db.query(Download).filter(
             Download.album_id == download.album_id,
             Download.id != download.id,
-            Download.status.in_(["failed", "cancelled"])
+            Download.status.in_(["failed", "cancelled", "pending", "searching", "downloading"])
         ).all()
         for prev_download in previous_downloads:
             self._cleanup_download_files(prev_download)
