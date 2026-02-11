@@ -144,6 +144,7 @@ class Download(Base):
     
     # slskd info
     slskd_username = Column(String(255), nullable=True)  # User we're downloading from
+    queued_files = Column(Text, nullable=True)  # JSON list of queued file paths (for accurate move)
     total_files = Column(Integer, default=0)
     completed_files = Column(Integer, default=0)
     total_bytes = Column(Integer, default=0)

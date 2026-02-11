@@ -6,6 +6,7 @@ Based on the slskd API: https://github.com/slskd/slskd
 import os
 import re
 import time
+import json
 import shutil
 import requests
 from pathlib import Path
@@ -334,6 +335,8 @@ class SlskdService:
             if self.client.download_files(best["username"], best["files"]):
                 download.status = "downloading"
                 download.slskd_username = best["username"]
+                # Store the queued file paths so we know exactly which files to move later
+                download.queued_files = json.dumps([f.get("filename") for f in best["files"]])
                 download.total_files = len(best["files"])
                 download.total_bytes = sum(f.get("size", 0) for f in best["files"])
                 download.started_at = datetime.utcnow()
@@ -676,8 +679,8 @@ class SlskdService:
             # slskd organizes downloads by username
             user_dir = download_dir / username
             if not user_dir.exists():
-                # Try to find any folder matching artist/album
-                user_dir = download_dir
+                print(f"slskd: User directory not found: {user_dir}")
+                return False
             
             # Find folders that might contain our album
             artist_name = download.artist_name.replace("/", "_").replace("\\", "_")
@@ -686,22 +689,42 @@ class SlskdService:
             target_dir = music_dir / artist_name / album_title
             target_dir.mkdir(parents=True, exist_ok=True)
             
-            # Find and move audio files
+            # Get the list of queued files for this specific download
+            queued_filenames = set()
+            if download.queued_files:
+                try:
+                    queued_paths = json.loads(download.queued_files)
+                    # Extract just the filename (last part of the path) for matching
+                    for remote_path in queued_paths:
+                        if remote_path:
+                            # Handle both forward and backslashes
+                            filename = remote_path.replace("\\", "/").split("/")[-1]
+                            queued_filenames.add(filename.lower())
+                except json.JSONDecodeError:
+                    print(f"slskd: Warning - could not parse queued_files for download {download_id}")
+            
+            # Find and move audio files - ONLY those that were queued for this download
             moved_count = 0
             for root, dirs, files in os.walk(user_dir):
                 for file in files:
                     if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
-                        # Check if file path contains artist or album name
                         file_path = Path(root) / file
-                        path_lower = str(file_path).lower()
                         
-                        artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
-                        album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
+                        # If we have queued files info, only move files that match
+                        if queued_filenames:
+                            if file.lower() not in queued_filenames:
+                                continue  # Skip files not in our queued list
+                        else:
+                            # Fallback to old behavior if queued_files not available (for old downloads)
+                            path_lower = str(file_path).lower()
+                            artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
+                            album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
+                            if not (any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words)):
+                                continue
                         
-                        if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
-                            dest_path = target_dir / file
-                            shutil.move(str(file_path), str(dest_path))
-                            moved_count += 1
+                        dest_path = target_dir / file
+                        shutil.move(str(file_path), str(dest_path))
+                        moved_count += 1
             
             if moved_count > 0:
                 download.status = "moved"
