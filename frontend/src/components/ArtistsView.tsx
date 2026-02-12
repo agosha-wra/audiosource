@@ -12,6 +12,8 @@ interface ArtistsViewProps {
   hasMore: boolean;
   sort: string;
   onSortChange: (sort: string) => void;
+  search: string;
+  onSearchChange: (search: string) => void;
   savedScrollPos: number;
   shouldRestoreScroll: boolean;
   onScrollRestored: () => void;
@@ -38,6 +40,8 @@ export default function ArtistsView({
   hasMore, 
   sort, 
   onSortChange,
+  search,
+  onSearchChange,
   savedScrollPos,
   shouldRestoreScroll,
   onScrollRestored
@@ -169,6 +173,18 @@ export default function ArtistsView({
       <header className="header">
         <h1>Artists</h1>
         <div className="header-controls">
+          <div className="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="M21 21l-4.35-4.35"/>
+            </svg>
+            <input
+              type="text"
+              placeholder="Search artists..."
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+            />
+          </div>
           <button 
             className="fetch-missing-btn"
             onClick={handleFetchMissing}
@@ -214,8 +230,8 @@ export default function ArtistsView({
               <circle cx="12" cy="8" r="4"/>
               <path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
             </svg>
-            <h2>No artists found</h2>
-            <p>Scan your library to discover artists.</p>
+            <h2>{search ? 'No matching artists' : 'No artists found'}</h2>
+            <p>{search ? `No artists match "${search}"` : 'Scan your library to discover artists.'}</p>
           </div>
         ) : (
           <>

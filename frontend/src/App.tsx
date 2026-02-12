@@ -119,6 +119,7 @@ function App() {
   const [artists, setArtists] = useState<Artist[]>([]);
   const [artistsLoaded, setArtistsLoaded] = useState(false);
   const [artistsSort, setArtistsSort] = useState('name');
+  const [artistsSearch, setArtistsSearch] = useState('');
   const [artistsHasMore, setArtistsHasMore] = useState(true);
   const [artistsScrollPos, setArtistsScrollPos] = useState(0);
   const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
@@ -245,32 +246,38 @@ function App() {
     updateURL('artist-detail', artistId);
   };
   
-  // Load artists (initial or when sort changes)
+  // Load artists (initial or when sort/search changes)
   const loadArtists = useCallback(async () => {
     try {
-      const data = await getArtists(0, 100, artistsSort);
+      const data = await getArtists(0, 100, artistsSort, artistsSearch);
       setArtists(data);
       setArtistsHasMore(data.length === 100);
       setArtistsLoaded(true);
     } catch (error) {
       console.error('Error fetching artists:', error);
     }
-  }, [artistsSort]);
+  }, [artistsSort, artistsSearch]);
   
   // Load more artists for infinite scroll
   const loadMoreArtists = useCallback(async () => {
     try {
-      const data = await getArtists(artists.length, 100, artistsSort);
+      const data = await getArtists(artists.length, 100, artistsSort, artistsSearch);
       setArtists(prev => [...prev, ...data]);
       setArtistsHasMore(data.length === 100);
     } catch (error) {
       console.error('Error loading more artists:', error);
     }
-  }, [artists.length, artistsSort]);
+  }, [artists.length, artistsSort, artistsSearch]);
   
   // Handle artist sort change
   const handleArtistsSortChange = useCallback((newSort: string) => {
     setArtistsSort(newSort);
+    setArtistsLoaded(false); // Force reload
+  }, []);
+  
+  // Handle artist search change
+  const handleArtistsSearchChange = useCallback((newSearch: string) => {
+    setArtistsSearch(newSearch);
     setArtistsLoaded(false); // Force reload
   }, []);
   
@@ -374,6 +381,8 @@ function App() {
             hasMore={artistsHasMore}
             sort={artistsSort}
             onSortChange={handleArtistsSortChange}
+            search={artistsSearch}
+            onSearchChange={handleArtistsSearchChange}
             savedScrollPos={artistsScrollPos}
             shouldRestoreScroll={shouldRestoreScroll}
             onScrollRestored={() => setShouldRestoreScroll(false)}

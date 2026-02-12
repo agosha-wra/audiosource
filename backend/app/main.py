@@ -470,10 +470,15 @@ def list_artists(
     skip: int = 0,
     limit: int = 100,
     sort: str = "name",
+    search: str = "",
     db: Session = Depends(get_db)
 ):
     """List all artists with album counts."""
     query = db.query(Artist)
+    
+    # Apply search filter
+    if search:
+        query = query.filter(Artist.name.ilike(f"%{search}%"))
     
     # Apply sorting
     if sort == "name":
