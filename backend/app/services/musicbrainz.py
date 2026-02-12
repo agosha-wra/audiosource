@@ -130,6 +130,39 @@ class MusicBrainzService:
             return None
 
     @classmethod
+    def get_release_group_track_count(cls, release_group_id: str) -> Optional[int]:
+        """
+        Get track count for a release group by fetching one of its releases.
+        Returns the track count from the first available release.
+        """
+        cls._rate_limit()
+
+        try:
+            # Get releases in this release group
+            result = musicbrainzngs.browse_releases(
+                release_group=release_group_id,
+                includes=["recordings"],
+                limit=5  # Just need one, but get a few in case some lack info
+            )
+            
+            releases = result.get("release-list", [])
+            
+            for release in releases:
+                # Calculate track count from medium list
+                medium_list = release.get("medium-list", [])
+                track_count = sum(
+                    int(medium.get("track-count", 0))
+                    for medium in medium_list
+                )
+                if track_count > 0:
+                    return track_count
+            
+            return None
+        except Exception as e:
+            print(f"MusicBrainz get release group track count error: {e}")
+            return None
+
+    @classmethod
     def get_cover_art_url(cls, musicbrainz_id: str) -> Optional[str]:
         """Get the cover art URL for a release."""
         # Use MusicBrainz's own cover art proxy (more reliable than direct coverartarchive.org)

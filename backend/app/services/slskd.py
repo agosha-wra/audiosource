@@ -249,6 +249,17 @@ class SlskdService:
         
         artist_name = album.artist.name if album.artist else "Unknown Artist"
         album_title = album.title
+        
+        # Fetch track count from MusicBrainz if missing
+        if not album.track_count and album.musicbrainz_id:
+            from app.services.musicbrainz import MusicBrainzService
+            print(f"slskd: Fetching track count from MusicBrainz for {album_title}...")
+            track_count = MusicBrainzService.get_release_group_track_count(album.musicbrainz_id)
+            if track_count:
+                album.track_count = track_count
+                self.db.commit()
+                print(f"slskd: Found {track_count} tracks for {album_title}")
+        
         expected_tracks = album.track_count or 0
         
         # Extract year from release_date for self-titled albums
