@@ -124,6 +124,7 @@ export default function ArtistDetailView({ artistId, onBack, onAlbumClick }: Art
                   key={album.id}
                   album={album}
                   onClick={() => onAlbumClick(album.id)}
+                  showScore={false}
                 />
               ))}
             </div>
