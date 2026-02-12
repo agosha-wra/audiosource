@@ -7,6 +7,7 @@ interface AlbumCardProps {
   isMissing?: boolean;
   onClick: () => void;
   showWishlistButton?: boolean;
+  showScore?: boolean;
   onWishlistChange?: () => void;
 }
 
@@ -15,6 +16,7 @@ export default function AlbumCard({
   isMissing = false, 
   onClick,
   showWishlistButton = true,
+  showScore = true,
   onWishlistChange
 }: AlbumCardProps) {
   const [isWishlisted, setIsWishlisted] = useState(album.is_wishlisted);
@@ -84,7 +86,7 @@ export default function AlbumCard({
         <div className="album-meta">
           {album.release_date && <span>{album.release_date.substring(0, 4)}</span>}
           {album.release_type && <span>{album.release_type}</span>}
-          {album.critic_score !== null && album.critic_score !== undefined && (
+          {showScore && album.critic_score !== null && album.critic_score !== undefined && (
             <span 
               className={`critic-score ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'} ${album.aoty_url ? 'has-link' : ''}`}
               title={album.aoty_url ? 'View on AOTY' : 'AOTY Critic Score'}

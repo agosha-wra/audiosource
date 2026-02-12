@@ -140,6 +140,7 @@ export default function AlbumsView({ onAlbumClick }: AlbumsViewProps) {
                   key={album.id}
                   album={album}
                   onClick={() => onAlbumClick(album.id)}
+                  showScore={false}
                 />
               ))}
             </div>
