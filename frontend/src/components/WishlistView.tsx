@@ -13,6 +13,7 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
   const [loading, setLoading] = useState(true);
   const [slskdStatus, setSlskdStatus] = useState<SlskdStatus | null>(null);
   const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
+  const [hideUpcoming, setHideUpcoming] = useState(false);
 
   const fetchSlskdStatus = useCallback(async () => {
     try {
@@ -80,17 +81,30 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
 
   const canDownload = slskdStatus?.enabled && slskdStatus?.available;
 
+  // Filter albums based on hideUpcoming setting
+  const displayedAlbums = hideUpcoming ? albums.filter(a => !isUpcoming(a)) : albums;
+
   return (
     <>
       <header className="header">
         <h1>Wishlist</h1>
-        <button className="search-albums-btn" onClick={onOpenSearch}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="M21 21l-4.35-4.35"/>
-          </svg>
-          <span>Search Albums</span>
-        </button>
+        <div className="header-controls">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={hideUpcoming}
+              onChange={(e) => setHideUpcoming(e.target.checked)}
+            />
+            <span>Hide upcoming</span>
+          </label>
+          <button className="search-albums-btn" onClick={onOpenSearch}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="M21 21l-4.35-4.35"/>
+            </svg>
+            <span>Search Albums</span>
+          </button>
+        </div>
       </header>
       
       <div className="content">
@@ -98,24 +112,29 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
           <div className="loading">
             <div className="loading-spinner" />
           </div>
-        ) : albums.length === 0 ? (
+        ) : displayedAlbums.length === 0 ? (
           <div className="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
             </svg>
-            <h2>Your wishlist is empty</h2>
-            <p>Search for albums you want, add them from artist pages, or check for upcoming releases from the sidebar.</p>
-            <button className="primary-btn" onClick={onOpenSearch}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8"/>
-                <path d="M21 21l-4.35-4.35"/>
-              </svg>
-              <span>Search MusicBrainz</span>
-            </button>
+            <h2>{hideUpcoming && albums.length > 0 ? 'All albums are upcoming' : 'Your wishlist is empty'}</h2>
+            <p>{hideUpcoming && albums.length > 0 
+              ? `You have ${albums.length} upcoming album${albums.length > 1 ? 's' : ''} hidden. Uncheck "Hide upcoming" to see them.`
+              : 'Search for albums you want, add them from artist pages, or check for upcoming releases from the sidebar.'
+            }</p>
+            {!hideUpcoming && (
+              <button className="primary-btn" onClick={onOpenSearch}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8"/>
+                  <path d="M21 21l-4.35-4.35"/>
+                </svg>
+                <span>Search MusicBrainz</span>
+              </button>
+            )}
           </div>
         ) : (
           <div className="albums-grid wishlist-grid">
-            {albums.map((album) => (
+            {displayedAlbums.map((album) => (
               <div key={album.id} className="wishlist-album-wrapper">
                 <AlbumCard
                   album={album}
