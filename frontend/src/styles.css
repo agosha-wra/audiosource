@@ -1399,26 +1399,151 @@ body::before {
   }
   
   .header {
-    padding-left: 70px;
+    padding: 16px;
+    padding-left: 60px;
+    flex-wrap: wrap;
+    gap: 12px;
   }
   
   .header h1 {
     font-size: 20px;
+    flex: 1;
+    min-width: 0;
   }
   
-  .header {
-    flex-direction: column;
-    gap: 16px;
-    align-items: stretch;
+  .header-controls {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   
   .search-box {
-    min-width: auto;
+    flex: 1;
+    min-width: 150px;
+    padding: 10px 14px;
+  }
+  
+  .sort-select {
+    flex-shrink: 0;
   }
   
   .albums-grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  
+  .artists-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  
+  .content {
+    padding: 16px;
+  }
+  
+  .fetch-missing-btn {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  
+  .fetch-missing-btn span {
+    display: none;
+  }
+  
+  .fetch-missing-btn svg {
+    margin: 0;
+  }
+  
+  .checkbox-label {
+    font-size: 12px;
+  }
+  
+  .search-albums-btn span {
+    display: none;
+  }
+  
+  .aoty-enrich-btn {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  
+  .aoty-enrich-btn span:not(:first-child) {
+    display: none;
+  }
+}
+
+/* Small phones */
+@media (max-width: 400px) {
+  .header {
+    padding: 12px;
+    padding-left: 56px;
+    gap: 8px;
+  }
+  
+  .header h1 {
+    font-size: 18px;
+  }
+  
+  .header-controls {
+    gap: 6px;
+  }
+  
+  .search-box {
+    padding: 8px 12px;
+    min-width: 120px;
+  }
+  
+  .search-box input {
+    font-size: 14px;
+  }
+  
+  .sort-select {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  
+  .albums-grid,
+  .artists-grid {
+    gap: 8px;
+  }
+  
+  .album-card {
+    border-radius: var(--radius-md);
+  }
+  
+  .album-info {
+    padding: 10px;
+  }
+  
+  .album-title {
+    font-size: 13px;
+  }
+  
+  .album-artist {
+    font-size: 11px;
+  }
+  
+  .album-meta {
+    font-size: 10px;
+  }
+  
+  .artist-card {
+    padding: 12px;
+  }
+  
+  .artist-avatar,
+  .artist-image {
+    width: 60px;
+    height: 60px;
+    font-size: 20px;
+  }
+  
+  .artist-name {
+    font-size: 13px;
+  }
+  
+  .content {
+    padding: 12px;
   }
 }
 
@@ -2363,30 +2488,81 @@ body::before {
   }
   
   .new-release-wishlist-btn {
-    width: 40px;
+    width: 36px;
+    height: 36px;
   }
   
   .new-release-card {
-    grid-template-columns: 30px 60px 1fr auto;
-    gap: 12px;
-    padding: 10px 12px;
+    grid-template-columns: 24px 50px 1fr auto;
+    gap: 8px;
+    padding: 8px 10px;
   }
   
   .new-release-cover {
-    width: 60px;
-    height: 60px;
+    width: 50px;
+    height: 50px;
   }
   
   .new-release-rank {
-    font-size: 12px;
+    font-size: 11px;
   }
   
   .new-release-title {
-    font-size: 14px;
+    font-size: 13px;
+  }
+  
+  .new-release-artist {
+    font-size: 12px;
+  }
+  
+  .new-release-meta {
+    font-size: 10px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  
+  .new-release-meta span {
+    padding: 2px 6px;
+  }
+  
+  .new-release-score {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 400px) {
+  .new-release-card {
+    grid-template-columns: 20px 45px 1fr auto;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  
+  .new-release-cover {
+    width: 45px;
+    height: 45px;
+  }
+  
+  .new-release-info {
+    gap: 2px;
+  }
+  
+  .new-release-title {
+    font-size: 12px;
+  }
+  
+  .new-release-artist {
+    font-size: 11px;
   }
   
   .new-release-meta {
     display: none;
+  }
+  
+  .new-release-wishlist-btn {
+    width: 32px;
+    height: 32px;
   }
 }
 
