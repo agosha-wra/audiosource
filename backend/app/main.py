@@ -332,7 +332,7 @@ def list_albums(
     elif sort == "title_desc":
         query = query.order_by(Album.title.desc())
     elif sort == "date_added":
-        query = query.order_by(Album.id.desc())  # id as proxy for date added
+        query = query.order_by(Album.created_at.desc())
     elif sort == "release_date":
         query = query.order_by(Album.release_date.desc().nullslast())
     elif sort == "release_date_asc":

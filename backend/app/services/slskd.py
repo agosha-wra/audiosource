@@ -787,6 +787,8 @@ class SlskdService:
                         album.is_owned = True
                         album.is_wishlisted = False
                         album.folder_path = str(target_dir)
+                        # Update created_at so the album appears as "recently added" in the library
+                        album.created_at = datetime.utcnow()
                         self.db.commit()
                         
                         # Scan the folder to extract track info, duration, etc.
