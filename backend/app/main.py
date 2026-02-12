@@ -381,6 +381,9 @@ def delete_album(album_id: int, db: Session = Depends(get_db)):
             print(f"Error deleting album folder {folder_path}: {e}")
             # Continue with database deletion even if filesystem delete fails
     
+    # Delete associated downloads first (foreign key constraint)
+    db.query(Download).filter(Download.album_id == album_id).delete()
+    
     # Delete the album from database (tracks are cascade deleted via relationship)
     db.delete(album)
     db.commit()
