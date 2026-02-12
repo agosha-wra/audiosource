@@ -386,7 +386,7 @@ class ScannerService:
 
     def scan_album_folder(self, folder_path: str, force_rescan: bool = False) -> Optional[Album]:
         """Scan a single album folder and create/update database records."""
-        # Check if album already exists
+        # Check if album already exists by folder path
         existing = self.db.query(Album).filter(Album.folder_path == folder_path).first()
         if existing and existing.is_scanned and not force_rescan:
             return existing
@@ -424,6 +424,14 @@ class ScannerService:
         elif artist_name:
             artist = self.get_or_create_artist(artist_name)
 
+        # Check if album exists by MusicBrainz ID (might exist from discography fetch)
+        mb_id = mb_info.get("musicbrainz_id") if mb_info else None
+        existing_by_mb_id = None
+        if mb_id:
+            existing_by_mb_id = self.db.query(Album).filter(
+                Album.musicbrainz_id == mb_id
+            ).first()
+
         # Check if album exists at new path (in case folder was reorganized)
         if new_folder_path != folder_path:
             existing_at_new = self.db.query(Album).filter(
@@ -432,6 +440,9 @@ class ScannerService:
             if existing_at_new:
                 # Update existing album at new location
                 album = existing_at_new
+            elif existing_by_mb_id:
+                # Album exists from discography fetch - update it with folder path
+                album = existing_by_mb_id
             elif existing:
                 # Update the existing album's path
                 album = existing
@@ -439,7 +450,8 @@ class ScannerService:
             else:
                 album = None
         else:
-            album = existing
+            # Prefer existing by MB ID (from discography) over existing by path
+            album = existing_by_mb_id or existing
 
         # Create or update album
         if album:
@@ -458,7 +470,7 @@ class ScannerService:
 
         # Update with MusicBrainz info if available
         if mb_info:
-            album.musicbrainz_id = mb_info.get("musicbrainz_id")
+            album.musicbrainz_id = mb_id
             album.release_date = mb_info.get("release_date")
             album.release_type = mb_info.get("release_type")
             album.track_count = mb_info.get("track_count") or len(updated_tracks)
