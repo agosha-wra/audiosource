@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
 
 const API_BASE = '/api';
 
@@ -169,6 +169,24 @@ export async function cancelDownload(downloadId: number): Promise<Download> {
 
 export async function deleteDownload(downloadId: number): Promise<void> {
   await fetchApi(`/downloads/${downloadId}`, { method: 'DELETE' });
+}
+
+export async function getDownloadCandidates(downloadId: number): Promise<BeetsCandidate[]> {
+  return fetchApi<BeetsCandidate[]>(`/downloads/${downloadId}/candidates`);
+}
+
+export async function applyDownloadMatch(
+  downloadId: number, 
+  matchId?: string, 
+  skipTagging: boolean = false
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (matchId) params.set('match_id', matchId);
+  if (skipTagging) params.set('skip_tagging', 'true');
+  const queryString = params.toString();
+  await fetchApi(`/downloads/${downloadId}/apply-match${queryString ? `?${queryString}` : ''}`, { 
+    method: 'POST' 
+  });
 }
 
 // Cancel scan

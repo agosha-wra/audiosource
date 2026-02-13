@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install beets for music tagging
+RUN pip install --no-cache-dir beets requests
+
 # Copy backend code
 COPY backend/ ./backend/
 

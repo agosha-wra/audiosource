@@ -207,6 +207,17 @@ class AOTYEnrichmentStatusResponse(BaseModel):
 
 # ============ Download Schemas ============
 
+class BeetsCandidateResponse(BaseModel):
+    """A potential album match from beets."""
+    id: str
+    artist: str
+    album: str
+    year: Optional[int] = None
+    tracks: int
+    distance: float
+    confidence: float
+
+
 class DownloadResponse(BaseModel):
     id: int
     album_id: Optional[int] = None
@@ -223,6 +234,7 @@ class DownloadResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     progress_percent: float = 0
+    beets_candidates: Optional[List[BeetsCandidateResponse]] = None
 
     class Config:
         from_attributes = True

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Download, Album, Artist
 from app.config import get_settings
+from app.services.beets_service import BeetsService
 
 
 class SlskdConfig:
@@ -731,7 +732,16 @@ class SlskdService:
         return cancelled_count
     
     def move_completed_download(self, download_id: int) -> bool:
-        """Move completed download to music library."""
+        """
+        Move completed download to music library with beets tagging.
+        
+        This method:
+        1. Checks the downloaded files with beets for matching
+        2. If confidence >= 95%, auto-applies tags and moves
+        3. If confidence < 95%, sets status to pending_review for user action
+        """
+        import json
+        
         download = self.db.query(Download).filter(Download.id == download_id).first()
         if not download or download.status != "completed":
             return False
@@ -744,81 +754,169 @@ class SlskdService:
                 return False
         
         try:
-            # Find downloaded files in slskd download directory
-            download_dir = Path(slskd_config.download_dir)
+            # Find the download folder
+            download_folder = self._find_download_folder(download)
+            if not download_folder:
+                print(f"slskd: Could not find download folder for {download.artist_name} - {download.album_title}")
+                return False
+            
             music_dir = Path(get_settings().music_folder)
             
-            if not download_dir.exists():
-                print(f"slskd: Download directory not found: {download_dir}")
-                return False
+            # Run beets check on the download folder
+            print(f"slskd: Checking album tags with beets for {download.artist_name} - {download.album_title}")
+            candidates = BeetsService.check_album_match(str(download_folder), str(music_dir))
             
-            # Look for files from this user
-            username = download.slskd_username
-            if not username:
-                return False
-            
-            # slskd organizes downloads by username
-            user_dir = download_dir / username
-            if not user_dir.exists():
-                # Try to find any folder matching artist/album
-                user_dir = download_dir
-            
-            # Find folders that might contain our album
-            artist_name = download.artist_name.replace("/", "_").replace("\\", "_")
-            album_title = download.album_title.replace("/", "_").replace("\\", "_")
-            
-            target_dir = music_dir / artist_name / album_title
-            target_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Find and move audio files
-            moved_count = 0
-            for root, dirs, files in os.walk(user_dir):
-                for file in files:
-                    if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
-                        # Check if file path contains artist or album name
-                        file_path = Path(root) / file
-                        path_lower = str(file_path).lower()
-                        
-                        artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
-                        album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
-                        
-                        if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
-                            dest_path = target_dir / file
-                            shutil.move(str(file_path), str(dest_path))
-                            moved_count += 1
-            
-            if moved_count > 0:
-                download.status = "moved"
-                self.db.commit()
+            if candidates:
+                print(f"slskd: Found {len(candidates)} beets candidates, best match: {candidates[0].confidence}%")
                 
-                # Update album to mark as owned and scan the folder for metadata
-                if download.album_id:
-                    album = self.db.query(Album).filter(Album.id == download.album_id).first()
-                    if album:
-                        album.is_owned = True
-                        album.is_wishlisted = False
-                        album.folder_path = str(target_dir)
-                        # Update created_at so the album appears as "recently added" in the library
-                        album.created_at = datetime.utcnow()
-                        self.db.commit()
-                        
-                        # Scan the folder to extract track info, duration, etc.
-                        from app.services.scanner import ScannerService
-                        scanner = ScannerService(self.db)
-                        try:
-                            scanner.scan_album_folder(str(target_dir), force_rescan=True)
-                            print(f"slskd: Scanned imported album at {target_dir}")
-                        except Exception as scan_error:
-                            print(f"slskd: Warning - failed to scan imported album: {scan_error}")
-                
-                print(f"slskd: Moved {moved_count} files to {target_dir}")
-                return True
+                # Check if we should auto-apply
+                if BeetsService.should_auto_apply(candidates):
+                    print(f"slskd: Auto-applying beets tags (confidence: {candidates[0].confidence}%)")
+                    BeetsService.apply_tags(str(download_folder), None, str(music_dir))
+                    # Continue to move files
+                else:
+                    # Store candidates and set status to pending_review
+                    download.beets_candidates = json.dumps([c.to_dict() for c in candidates])
+                    download.status = "pending_review"
+                    self.db.commit()
+                    print(f"slskd: Download {download_id} set to pending_review - user action required")
+                    return True
+            else:
+                print(f"slskd: No beets matches found, proceeding without tagging")
             
-            return False
+            # Move files to library
+            return self._move_files_to_library(download, download_folder)
             
         except Exception as e:
-            print(f"slskd: Error moving files: {e}")
-            download.error_message = f"Failed to move files: {e}"
+            print(f"slskd: Error in move_completed_download: {e}")
+            download.error_message = f"Failed to process download: {e}"
+            self.db.commit()
+            return False
+    
+    def _find_download_folder(self, download: Download) -> Optional[Path]:
+        """Find the folder containing downloaded files for this download."""
+        download_dir = Path(slskd_config.download_dir)
+        
+        if not download_dir.exists():
+            return None
+        
+        username = download.slskd_username
+        if not username:
+            return None
+        
+        # slskd organizes downloads by username
+        user_dir = download_dir / username
+        if not user_dir.exists():
+            user_dir = download_dir
+        
+        # Find folder that contains our album files
+        artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
+        album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
+        
+        for root, dirs, files in os.walk(user_dir):
+            # Check if this folder has audio files matching our album
+            audio_files = [f for f in files if any(f.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"])]
+            if audio_files:
+                path_lower = root.lower()
+                if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
+                    return Path(root)
+        
+        # Return user_dir as fallback
+        return user_dir if user_dir.exists() else None
+    
+    def _move_files_to_library(self, download: Download, source_folder: Path) -> bool:
+        """Move audio files from source folder to music library."""
+        music_dir = Path(get_settings().music_folder)
+        
+        artist_name = download.artist_name.replace("/", "_").replace("\\", "_")
+        album_title = download.album_title.replace("/", "_").replace("\\", "_")
+        
+        target_dir = music_dir / artist_name / album_title
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        moved_count = 0
+        artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
+        album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
+        
+        for root, dirs, files in os.walk(source_folder):
+            for file in files:
+                if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
+                    file_path = Path(root) / file
+                    path_lower = str(file_path).lower()
+                    
+                    if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
+                        dest_path = target_dir / file
+                        shutil.move(str(file_path), str(dest_path))
+                        moved_count += 1
+        
+        if moved_count > 0:
+            download.status = "moved"
+            self.db.commit()
+            
+            # Update album to mark as owned
+            if download.album_id:
+                album = self.db.query(Album).filter(Album.id == download.album_id).first()
+                if album:
+                    album.is_owned = True
+                    album.is_wishlisted = False
+                    album.folder_path = str(target_dir)
+                    album.created_at = datetime.utcnow()
+                    self.db.commit()
+                    
+                    # Scan the folder for metadata
+                    from app.services.scanner import ScannerService
+                    scanner = ScannerService(self.db)
+                    try:
+                        scanner.scan_album_folder(str(target_dir), force_rescan=True)
+                        print(f"slskd: Scanned imported album at {target_dir}")
+                    except Exception as scan_error:
+                        print(f"slskd: Warning - failed to scan imported album: {scan_error}")
+            
+            print(f"slskd: Moved {moved_count} files to {target_dir}")
+            return True
+        
+        return False
+    
+    def apply_match_and_move(self, download_id: int, match_id: Optional[str] = None, 
+                             skip_tagging: bool = False) -> bool:
+        """
+        Apply a beets match and move files to library.
+        Called when user selects a match from pending_review state.
+        
+        Args:
+            download_id: ID of the download
+            match_id: Optional specific match ID (not used yet - beets applies best match)
+            skip_tagging: If True, skip beets tagging and just move files
+        """
+        download = self.db.query(Download).filter(Download.id == download_id).first()
+        if not download:
+            return False
+        
+        if download.status not in ["completed", "pending_review"]:
+            return False
+        
+        try:
+            download_folder = self._find_download_folder(download)
+            if not download_folder:
+                print(f"slskd: Could not find download folder for apply_match_and_move")
+                return False
+            
+            music_dir = Path(get_settings().music_folder)
+            
+            # Apply beets tagging if not skipping
+            if not skip_tagging:
+                print(f"slskd: Applying beets tags for {download.artist_name} - {download.album_title}")
+                BeetsService.apply_tags(str(download_folder), match_id, str(music_dir))
+            
+            # Clear candidates and move files
+            download.beets_candidates = None
+            self.db.commit()
+            
+            return self._move_files_to_library(download, download_folder)
+            
+        except Exception as e:
+            print(f"slskd: Error in apply_match_and_move: {e}")
+            download.error_message = f"Failed to apply match: {e}"
             self.db.commit()
             return False
     

@@ -150,8 +150,12 @@ class Download(Base):
     completed_bytes = Column(Integer, default=0)
     
     # Status
-    status = Column(String(50), default="pending")  # pending, searching, downloading, completed, failed, moved
+    # pending, searching, downloading, completed, pending_review, failed, moved, cancelled
+    status = Column(String(50), default="pending")
     error_message = Column(Text, nullable=True)
+    
+    # Beets tagging candidates (JSON array of match options)
+    beets_candidates = Column(Text, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)

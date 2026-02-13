@@ -30,6 +30,7 @@ from app.schemas import (
     ApplyMetadataRequest,
     AppSettingsResponse,
     SlskdSettingsResponse,
+    BeetsCandidateResponse,
 )
 from app.config import get_settings
 from difflib import SequenceMatcher
@@ -40,6 +41,26 @@ from app.services.aoty import AOTYService
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+# Run migrations for new columns on existing tables
+def run_migrations():
+    """Add any missing columns to existing tables."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # Check and add beets_candidates column to downloads table
+        try:
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'downloads' AND column_name = 'beets_candidates'"
+            ))
+            if result.fetchone() is None:
+                conn.execute(text("ALTER TABLE downloads ADD COLUMN beets_candidates TEXT"))
+                conn.commit()
+                print("Migration: Added beets_candidates column to downloads table")
+        except Exception as e:
+            print(f"Migration check failed (may be normal on first run): {e}")
+
+run_migrations()
 
 app = FastAPI(
     title="AudioSource",
@@ -1383,6 +1404,63 @@ def move_download(
     background_tasks.add_task(run_move_download_in_background, download_id)
     
     return {"message": "Moving download to music library"}
+
+
+@app.get("/api/downloads/{download_id}/candidates", response_model=List[BeetsCandidateResponse])
+def get_download_candidates(
+    download_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get beets match candidates for a download pending review."""
+    import json
+    
+    download = db.query(Download).filter(Download.id == download_id).first()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    if not download.beets_candidates:
+        return []
+    
+    try:
+        candidates_data = json.loads(download.beets_candidates)
+        return [BeetsCandidateResponse(**c) for c in candidates_data]
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+@app.post("/api/downloads/{download_id}/apply-match")
+def apply_download_match(
+    download_id: int,
+    match_id: Optional[str] = None,
+    skip_tagging: bool = False,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    """Apply a beets match and move the download to library."""
+    download = db.query(Download).filter(Download.id == download_id).first()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+    
+    if download.status not in ["completed", "pending_review"]:
+        raise HTTPException(status_code=400, detail="Download must be completed or pending review")
+    
+    # Run in background
+    def apply_and_move():
+        from app.database import SessionLocal
+        db_session = SessionLocal()
+        try:
+            from app.services.slskd import SlskdService
+            service = SlskdService(db_session)
+            service.apply_match_and_move(download_id, match_id, skip_tagging)
+        finally:
+            db_session.close()
+    
+    if background_tasks:
+        background_tasks.add_task(apply_and_move)
+    else:
+        apply_and_move()
+    
+    return {"message": "Applying match and moving to library"}
 
 
 @app.post("/api/downloads/{download_id}/cancel", response_model=DownloadResponse)

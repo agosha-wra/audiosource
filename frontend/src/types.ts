@@ -125,6 +125,16 @@ export interface NewReleasesScrapeStatus {
 }
 
 // Downloads (slskd integration)
+export interface BeetsCandidate {
+  id: string;
+  artist: string;
+  album: string;
+  year: number | null;
+  tracks: number;
+  distance: number;
+  confidence: number;
+}
+
 export interface Download {
   id: number;
   album_id: number | null;
@@ -135,12 +145,13 @@ export interface Download {
   completed_files: number;
   total_bytes: number;
   completed_bytes: number;
-  status: 'pending' | 'searching' | 'downloading' | 'completed' | 'failed' | 'moved' | 'cancelled';
+  status: 'pending' | 'searching' | 'downloading' | 'completed' | 'pending_review' | 'failed' | 'moved' | 'cancelled';
   error_message: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
   progress_percent: number;
+  beets_candidates?: BeetsCandidate[] | null;
 }
 
 export interface SlskdStatus {
