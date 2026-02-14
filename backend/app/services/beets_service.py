@@ -70,7 +70,8 @@ match:
         countries: ['US', 'GB', 'XW']
         media: ['Digital Media', 'CD']
 
-plugins: []
+# IMPORTANT: musicbrainz plugin MUST be loaded for MusicBrainz searches to work
+plugins: [musicbrainz]
 """
         config_file = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
         config_file.write(config)
@@ -78,19 +79,10 @@ plugins: []
         return config_file.name
     
     @classmethod
-    def check_album_match(cls, folder_path: str, library_path: str = "/music",
-                          artist_hint: str = None, album_hint: str = None,
-                          musicbrainz_id: str = None) -> List[BeetsCandidate]:
+    def check_album_match(cls, folder_path: str, library_path: str = "/music") -> List[BeetsCandidate]:
         """
         Check an album folder against MusicBrainz using beets.
         Returns list of potential matches sorted by confidence.
-        
-        Args:
-            folder_path: Path to folder with audio files
-            library_path: Music library path
-            artist_hint: Expected artist name (helps beets search)
-            album_hint: Expected album name (helps beets search)
-            musicbrainz_id: If known, we can create a candidate directly
         """
         candidates = []
         
@@ -98,42 +90,33 @@ plugins: []
             print(f"beets: Folder not found: {folder_path}")
             return candidates
         
-        # If we already have the MusicBrainz ID, create a candidate directly
-        # This bypasses beets' unreliable search
-        if musicbrainz_id and artist_hint and album_hint:
-            print(f"beets: Using known MusicBrainz ID: {musicbrainz_id}")
-            candidates.append(BeetsCandidate(
-                id=musicbrainz_id,
-                artist=artist_hint,
-                album=album_hint,
-                year=None,
-                tracks=0,
-                distance=0.0,  # Perfect match since we know the ID
-                musicbrainz_url=f"https://musicbrainz.org/release-group/{musicbrainz_id}"
-            ))
-            return candidates
-        
         # List files in folder for debugging
         try:
-            files = list(Path(folder_path).glob("*"))
-            print(f"beets: Checking folder with {len(files)} files: {folder_path}")
+            files = [f for f in Path(folder_path).glob("*") if f.suffix.lower() in ('.mp3', '.flac', '.m4a', '.ogg', '.opus', '.wav')]
+            print(f"beets: Checking folder with {len(files)} audio files: {folder_path}")
+            for f in files[:3]:  # Show first 3 files
+                print(f"beets:   - {f.name}")
+            if len(files) > 3:
+                print(f"beets:   ... and {len(files) - 3} more")
         except Exception as e:
             print(f"beets: Error listing folder: {e}")
         
         config_path = cls._create_beets_config(library_path)
         
         try:
-            # Run beets import in pretend mode
+            # Run beets import in pretend mode with timid to show all candidates
             # -p = pretend (don't actually import)
-            # Pipe 's' (skip) repeatedly to stdin so beets doesn't hang on prompts
+            # -t = timid (always ask, shows all candidates)
+            # Pipe 'b' (abort) to exit after seeing candidates
+            print(f"beets: Running: beet -c {config_path} import -p -t {folder_path}")
             result = subprocess.run(
                 [
                     "beet", "-c", config_path,
-                    "import", "-p", folder_path
+                    "import", "-p", "-t", folder_path
                 ],
                 capture_output=True,
                 text=True,
-                input="s\ns\ns\ns\ns\n",  # Skip any prompts
+                input="b\n",  # Abort after seeing candidates
                 timeout=120,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
@@ -164,7 +147,22 @@ plugins: []
     
     @classmethod
     def _parse_beets_output(cls, output: str) -> List[BeetsCandidate]:
-        """Parse beets output to extract match candidates with MusicBrainz IDs."""
+        """Parse beets output to extract match candidates with MusicBrainz IDs.
+        
+        Beets output format (timid mode):
+        
+        /path/to/folder (15 items)
+        
+          Match (98.2%):
+          Artist Name - Album Title
+          ≠ media, tracks
+          MusicBrainz, CD, 2007, US, Label Name
+          https://musicbrainz.org/release/uuid-here
+          
+        Or for multiple candidates:
+          1. Artist - Album (95.0%)
+          ...
+        """
         candidates = []
         lines = output.split('\n')
         
@@ -173,95 +171,104 @@ plugins: []
         for i, line in enumerate(lines):
             line_stripped = line.strip()
             
-            # Look for MusicBrainz URL (contains the release ID)
-            if 'musicbrainz.org/release/' in line.lower():
-                mb_match = cls.MB_ID_PATTERN.search(line)
+            # Skip ANSI escape codes
+            clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line_stripped)
+            clean_line = clean_line.strip()
+            
+            # Format: "Match (98.2%):" - start of a match block
+            match_header = re.match(r'Match\s*\((\d+\.?\d*)%\):', clean_line)
+            if match_header:
+                # Save previous candidate if complete
+                if cls._is_candidate_complete(current_candidate):
+                    candidates.append(cls._create_candidate_from_dict(current_candidate))
+                
+                current_candidate = {
+                    'confidence': float(match_header.group(1)),
+                    'distance': 1.0 - (float(match_header.group(1)) / 100.0)
+                }
+                continue
+            
+            # Format: "Artist Name - Album Title" (line after Match header)
+            if current_candidate.get('confidence') and not current_candidate.get('artist'):
+                if ' - ' in clean_line and not clean_line.startswith(('≠', '*', '#', '(')):
+                    parts = clean_line.split(' - ', 1)
+                    if len(parts) == 2:
+                        current_candidate['artist'] = parts[0].strip()
+                        current_candidate['album'] = parts[1].strip()
+                        continue
+            
+            # Format: "MusicBrainz, CD, 2007, US, Label" - metadata line
+            if clean_line.startswith('MusicBrainz'):
+                parts = clean_line.split(', ')
+                for part in parts:
+                    part = part.strip()
+                    # Year is a 4-digit number
+                    if re.match(r'^(19|20)\d{2}$', part):
+                        current_candidate['year'] = int(part)
+                continue
+            
+            # Look for MusicBrainz URL
+            if 'musicbrainz.org/release/' in clean_line.lower():
+                mb_match = cls.MB_ID_PATTERN.search(clean_line)
                 if mb_match:
                     current_candidate['mb_id'] = mb_match.group(0)
                     current_candidate['mb_url'] = f"https://musicbrainz.org/release/{mb_match.group(0)}"
+                continue
             
-            # Look for similarity percentage - various formats beets uses
-            # Format 1: "(Similarity: 95.2%)"
-            # Format 2: "95.2% similar"
-            # Format 3: "(95.2%)"
-            similarity_match = re.search(r'\(Similarity:\s*(\d+\.?\d*)%\)', line_stripped)
-            if not similarity_match:
-                similarity_match = re.search(r'(\d+\.?\d*)%\s*similar', line_stripped)
-            if not similarity_match:
-                similarity_match = re.search(r'\((\d+\.?\d*)%\)', line_stripped)
+            # Format: "1. Artist - Album (95.0%)" - numbered candidate
+            numbered_match = re.match(r'^\d+\.\s+(.+?)\s+-\s+(.+?)\s+\((\d+\.?\d*)%\)', clean_line)
+            if numbered_match:
+                # Save previous candidate if complete
+                if cls._is_candidate_complete(current_candidate):
+                    candidates.append(cls._create_candidate_from_dict(current_candidate))
+                
+                current_candidate = {
+                    'artist': numbered_match.group(1).strip(),
+                    'album': numbered_match.group(2).strip(),
+                    'confidence': float(numbered_match.group(3)),
+                    'distance': 1.0 - (float(numbered_match.group(3)) / 100.0)
+                }
+                continue
             
-            if similarity_match:
+            # Legacy format: "(Similarity: 95.2%)" or "(95.2%)"
+            similarity_match = re.search(r'\(Similarity:\s*(\d+\.?\d*)%\)', clean_line)
+            if not similarity_match:
+                similarity_match = re.search(r'\((\d+\.?\d*)%\)', clean_line)
+            
+            if similarity_match and not current_candidate.get('confidence'):
                 try:
                     similarity = float(similarity_match.group(1))
-                    distance = 1.0 - (similarity / 100.0)
-                    current_candidate['distance'] = distance
-                    
-                    # Try to extract artist - album from the same line
-                    # Remove the similarity part and parse the rest
-                    rest = re.sub(r'\(Similarity:\s*\d+\.?\d*%\)', '', line_stripped)
-                    rest = re.sub(r'\(\d+\.?\d*%\)', '', rest)
-                    rest = rest.strip()
-                    
-                    if ' - ' in rest:
-                        parts = rest.split(' - ', 1)
-                        current_candidate['artist'] = parts[0].strip()
-                        album_part = parts[1]
-                        
-                        # Parse album, year, tracks from "Album, 2020, 12 tracks"
-                        album_parts = album_part.split(', ')
-                        current_candidate['album'] = album_parts[0].strip()
-                        
-                        for part in album_parts[1:]:
-                            part = part.strip()
-                            if part.isdigit() and len(part) == 4:
-                                current_candidate['year'] = int(part)
-                            elif 'track' in part.lower():
-                                try:
-                                    current_candidate['tracks'] = int(part.split()[0])
-                                except:
-                                    pass
-                    
-                    # If we have enough info, create a candidate
-                    if 'artist' in current_candidate and 'album' in current_candidate:
-                        candidate = BeetsCandidate(
-                            id=current_candidate.get('mb_id', f"unknown_{hash(str(current_candidate))}"),
-                            artist=current_candidate['artist'],
-                            album=current_candidate['album'],
-                            year=current_candidate.get('year'),
-                            tracks=current_candidate.get('tracks', 0),
-                            distance=current_candidate['distance'],
-                            musicbrainz_url=current_candidate.get('mb_url')
-                        )
-                        candidates.append(candidate)
-                        current_candidate = {}  # Reset for next candidate
-                        
-                except Exception as e:
-                    print(f"beets: Error parsing similarity line '{line_stripped}': {e}")
-            
-            # Also try to catch "Tagging:" section which indicates the recommended match
-            if line_stripped.startswith('Tagging:'):
-                # Next non-empty line should be "Artist - Album"
-                for j in range(i + 1, min(i + 5, len(lines))):
-                    next_line = lines[j].strip()
-                    if next_line and ' - ' in next_line:
-                        parts = next_line.split(' - ', 1)
-                        if len(parts) == 2:
-                            current_candidate['artist'] = parts[0].strip()
-                            current_candidate['album'] = parts[1].strip()
-                        break
+                    current_candidate['confidence'] = similarity
+                    current_candidate['distance'] = 1.0 - (similarity / 100.0)
+                except:
+                    pass
         
-        # Sort by confidence (lowest distance first)
-        candidates.sort(key=lambda c: c.distance)
+        # Don't forget the last candidate
+        if cls._is_candidate_complete(current_candidate):
+            candidates.append(cls._create_candidate_from_dict(current_candidate))
         
-        # Remove duplicates based on MB ID
-        seen_ids = set()
-        unique_candidates = []
-        for c in candidates:
-            if c.id not in seen_ids:
-                seen_ids.add(c.id)
-                unique_candidates.append(c)
-        
-        return unique_candidates
+        print(f"beets: Parsed {len(candidates)} candidates")
+        return candidates
+    
+    @classmethod
+    def _is_candidate_complete(cls, candidate: dict) -> bool:
+        """Check if a candidate dict has minimum required fields."""
+        return (candidate.get('artist') and 
+                candidate.get('album') and 
+                candidate.get('confidence') is not None)
+    
+    @classmethod
+    def _create_candidate_from_dict(cls, d: dict) -> 'BeetsCandidate':
+        """Create a BeetsCandidate from a parsed dict."""
+        return BeetsCandidate(
+            id=d.get('mb_id', f"unknown_{hash(str(d))}"),
+            artist=d['artist'],
+            album=d['album'],
+            year=d.get('year'),
+            tracks=d.get('tracks', 0),
+            distance=d.get('distance', 0.0),
+            musicbrainz_url=d.get('mb_url')
+        )
     
     @classmethod
     def apply_tags(cls, folder_path: str, match_id: Optional[str] = None, 
@@ -271,7 +278,7 @@ plugins: []
         
         Args:
             folder_path: Path to album folder
-            match_id: MusicBrainz release or release-group ID to use
+            match_id: MusicBrainz release ID to use (optional)
             library_path: Music library path
         
         Returns:
@@ -286,24 +293,26 @@ plugins: []
         applied_info = None
         
         try:
-            # Build command - use --search-id if we have a MusicBrainz ID
+            # Build command
+            # -q = quiet (don't ask, just apply best match)
+            # --flat = don't use album directories
             cmd = ["beet", "-c", config_path, "import", "-q", "--flat"]
             
+            # If we have a specific ID, use --search-id to guide beets
             if match_id:
-                # Use the specific MusicBrainz ID for matching
                 cmd.extend(["--search-id", match_id])
-                print(f"beets: Using MusicBrainz ID for tagging: {match_id}")
+                print(f"beets: Using MusicBrainz ID hint: {match_id}")
             
             cmd.append(folder_path)
             
-            print(f"beets: Running command: {' '.join(cmd)}")
+            print(f"beets: Running: {' '.join(cmd)}")
             
-            # Run beets import with auto-tagging
+            # Run beets import
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                input="s\ns\ns\n",  # Skip any unexpected prompts
+                input="",  # No stdin
                 timeout=180,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
@@ -311,19 +320,19 @@ plugins: []
             full_output = result.stdout + "\n" + result.stderr
             print(f"beets: Apply output:\n{full_output[:2000]}")
             
-            # Try to extract what was applied
+            # Try to extract what was applied from beets output
             mb_match = cls.MB_ID_PATTERN.search(full_output)
-            if match_id:
-                # We used a specific ID, use that
-                applied_info = {
-                    "musicbrainz_id": match_id,
-                    "musicbrainz_url": f"https://musicbrainz.org/release-group/{match_id}",
-                    "status": "applied"
-                }
-            elif mb_match:
+            if mb_match:
                 applied_info = {
                     "musicbrainz_id": mb_match.group(0),
                     "musicbrainz_url": f"https://musicbrainz.org/release/{mb_match.group(0)}",
+                    "status": "applied"
+                }
+            elif match_id:
+                # Fallback to the ID we provided
+                applied_info = {
+                    "musicbrainz_id": match_id,
+                    "musicbrainz_url": f"https://musicbrainz.org/release/{match_id}",
                     "status": "applied"
                 }
             else:

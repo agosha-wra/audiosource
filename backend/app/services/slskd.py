@@ -778,34 +778,46 @@ class SlskdService:
             print(f"slskd: Checking album tags with beets for {download.artist_name} - {download.album_title}")
             print(f"slskd: Download folder: {download_folder}")
             
-            # Get the album's MusicBrainz ID if available
-            musicbrainz_id = None
-            if download.album_id:
-                album = self.db.query(Album).filter(Album.id == download.album_id).first()
-                if album and album.musicbrainz_id:
-                    musicbrainz_id = album.musicbrainz_id
-                    print(f"slskd: Found MusicBrainz ID from album: {musicbrainz_id}")
-            
-            candidates = BeetsService.check_album_match(
-                str(download_folder), 
-                str(music_dir),
-                artist_hint=download.artist_name,
-                album_hint=download.album_title,
-                musicbrainz_id=musicbrainz_id
-            )
-            
-            # Always set to pending_review for user to decide
-            # Store candidates (may be empty list)
-            download.beets_candidates = json.dumps([c.to_dict() for c in candidates] if candidates else [])
-            download.status = "pending_review"
-            self.db.commit()
+            candidates = BeetsService.check_album_match(str(download_folder), str(music_dir))
             
             if candidates:
-                print(f"slskd: Found {len(candidates)} beets candidates, best match: {candidates[0].confidence}%")
+                best_match = candidates[0]
+                print(f"slskd: Found {len(candidates)} beets candidates, best match: {best_match.confidence}% ({best_match.artist} - {best_match.album})")
+                
+                # Auto-apply if confidence >= 90%
+                if best_match.confidence >= 90.0:
+                    print(f"slskd: High confidence match ({best_match.confidence}%), auto-applying tags...")
+                    success, applied_info = BeetsService.apply_tags(
+                        str(download_folder), 
+                        best_match.id,
+                        str(music_dir)
+                    )
+                    
+                    if success:
+                        download.beets_applied_match = json.dumps(applied_info or {
+                            "status": "auto_applied",
+                            "musicbrainz_id": best_match.id,
+                            "musicbrainz_url": best_match.musicbrainz_url,
+                            "confidence": best_match.confidence
+                        })
+                        # Move files to library
+                        return self._move_files_to_library(download, download_folder, music_dir)
+                    else:
+                        print(f"slskd: Auto-apply failed, falling back to pending_review")
+                        # Fall through to pending_review
+                
+                # Confidence < 90% or auto-apply failed - need user review
+                download.beets_candidates = json.dumps([c.to_dict() for c in candidates])
+                download.status = "pending_review"
+                self.db.commit()
+                print(f"slskd: Download {download_id} set to pending_review - user action required")
             else:
+                # No matches found - still need user to choose skip tagging
+                download.beets_candidates = json.dumps([])
+                download.status = "pending_review"
+                self.db.commit()
                 print(f"slskd: No beets matches found - user must choose to skip tagging")
             
-            print(f"slskd: Download {download_id} set to pending_review - user action required")
             return True
             
         except Exception as e:
