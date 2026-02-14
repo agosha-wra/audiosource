@@ -65,7 +65,9 @@ import:
     quiet: no
     
 match:
-    strong_rec_thresh: 0.04
+    # Very low threshold so -q mode accepts most matches
+    strong_rec_thresh: 0.30
+    medium_rec_thresh: 0.60
     preferred:
         countries: ['US', 'GB', 'XW']
         media: ['Digital Media', 'CD']
@@ -306,15 +308,16 @@ plugins: [musicbrainz, deezer, spotify]
             
             cmd.append(folder_path)
             
+            # Add -q (quiet) to auto-apply matches meeting threshold
+            # With strong_rec_thresh: 0.30 (70% match), most good matches will apply
+            cmd.insert(cmd.index("import") + 1, "-q")
+            
             print(f"beets: Running: {' '.join(cmd)}")
             
-            # Run beets import, send 'a' (apply) to accept the best match
-            # Send multiple 'a's in case there are multiple prompts
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                input="a\na\na\na\na\n",  # Apply best match
                 timeout=180,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
