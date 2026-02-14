@@ -19,18 +19,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including chromaprint for audio fingerprinting
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    libchromaprint-dev \
+    libchromaprint-tools \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install beets for music tagging
-RUN pip install --no-cache-dir beets requests
+# Install beets for music tagging with acoustic fingerprinting
+RUN pip install --no-cache-dir beets pyacoustid requests
 
 # Copy backend code
 COPY backend/ ./backend/
