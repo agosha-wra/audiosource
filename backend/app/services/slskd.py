@@ -778,12 +778,21 @@ class SlskdService:
             print(f"slskd: Checking album tags with beets for {download.artist_name} - {download.album_title}")
             print(f"slskd: Download folder: {download_folder}")
             
-            # Check if beets command exists
-            import shutil
-            beets_path = shutil.which("beet")
-            print(f"slskd: Beets command path: {beets_path}")
+            # Get the album's MusicBrainz ID if available
+            musicbrainz_id = None
+            if download.album_id:
+                album = self.db.query(Album).filter(Album.id == download.album_id).first()
+                if album and album.musicbrainz_id:
+                    musicbrainz_id = album.musicbrainz_id
+                    print(f"slskd: Found MusicBrainz ID from album: {musicbrainz_id}")
             
-            candidates = BeetsService.check_album_match(str(download_folder), str(music_dir))
+            candidates = BeetsService.check_album_match(
+                str(download_folder), 
+                str(music_dir),
+                artist_hint=download.artist_name,
+                album_hint=download.album_title,
+                musicbrainz_id=musicbrainz_id
+            )
             
             # Always set to pending_review for user to decide
             # Store candidates (may be empty list)

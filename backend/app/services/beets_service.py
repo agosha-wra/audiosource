@@ -78,15 +78,39 @@ plugins: []
         return config_file.name
     
     @classmethod
-    def check_album_match(cls, folder_path: str, library_path: str = "/music") -> List[BeetsCandidate]:
+    def check_album_match(cls, folder_path: str, library_path: str = "/music",
+                          artist_hint: str = None, album_hint: str = None,
+                          musicbrainz_id: str = None) -> List[BeetsCandidate]:
         """
         Check an album folder against MusicBrainz using beets.
         Returns list of potential matches sorted by confidence.
+        
+        Args:
+            folder_path: Path to folder with audio files
+            library_path: Music library path
+            artist_hint: Expected artist name (helps beets search)
+            album_hint: Expected album name (helps beets search)
+            musicbrainz_id: If known, we can create a candidate directly
         """
         candidates = []
         
         if not os.path.exists(folder_path):
             print(f"beets: Folder not found: {folder_path}")
+            return candidates
+        
+        # If we already have the MusicBrainz ID, create a candidate directly
+        # This bypasses beets' unreliable search
+        if musicbrainz_id and artist_hint and album_hint:
+            print(f"beets: Using known MusicBrainz ID: {musicbrainz_id}")
+            candidates.append(BeetsCandidate(
+                id=musicbrainz_id,
+                artist=artist_hint,
+                album=album_hint,
+                year=None,
+                tracks=0,
+                distance=0.0,  # Perfect match since we know the ID
+                musicbrainz_url=f"https://musicbrainz.org/release-group/{musicbrainz_id}"
+            ))
             return candidates
         
         # List files in folder for debugging
@@ -99,9 +123,9 @@ plugins: []
         config_path = cls._create_beets_config(library_path)
         
         try:
-            # Run beets import in pretend mode (non-interactive)
-            # -p = pretend (don't actually import, just show what would happen)
-            # NOT using -t (timid) as it requires interactive input
+            # Run beets import in pretend mode
+            # -p = pretend (don't actually import)
+            # Pipe 's' (skip) repeatedly to stdin so beets doesn't hang on prompts
             result = subprocess.run(
                 [
                     "beet", "-c", config_path,
@@ -109,6 +133,7 @@ plugins: []
                 ],
                 capture_output=True,
                 text=True,
+                input="s\ns\ns\ns\ns\n",  # Skip any prompts
                 timeout=120,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
@@ -244,6 +269,11 @@ plugins: []
         """
         Apply beets tagging to an album folder.
         
+        Args:
+            folder_path: Path to album folder
+            match_id: MusicBrainz release or release-group ID to use
+            library_path: Music library path
+        
         Returns:
             Tuple of (success, applied_match_info)
             applied_match_info contains details about what was applied
@@ -256,14 +286,24 @@ plugins: []
         applied_info = None
         
         try:
+            # Build command - use --search-id if we have a MusicBrainz ID
+            cmd = ["beet", "-c", config_path, "import", "-q", "--flat"]
+            
+            if match_id:
+                # Use the specific MusicBrainz ID for matching
+                cmd.extend(["--search-id", match_id])
+                print(f"beets: Using MusicBrainz ID for tagging: {match_id}")
+            
+            cmd.append(folder_path)
+            
+            print(f"beets: Running command: {' '.join(cmd)}")
+            
             # Run beets import with auto-tagging
             result = subprocess.run(
-                [
-                    "beet", "-c", config_path,
-                    "import", "-q", "--flat", folder_path
-                ],
+                cmd,
                 capture_output=True,
                 text=True,
+                input="s\ns\ns\n",  # Skip any unexpected prompts
                 timeout=180,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
@@ -273,7 +313,14 @@ plugins: []
             
             # Try to extract what was applied
             mb_match = cls.MB_ID_PATTERN.search(full_output)
-            if mb_match:
+            if match_id:
+                # We used a specific ID, use that
+                applied_info = {
+                    "musicbrainz_id": match_id,
+                    "musicbrainz_url": f"https://musicbrainz.org/release-group/{match_id}",
+                    "status": "applied"
+                }
+            elif mb_match:
                 applied_info = {
                     "musicbrainz_id": mb_match.group(0),
                     "musicbrainz_url": f"https://musicbrainz.org/release/{mb_match.group(0)}",
