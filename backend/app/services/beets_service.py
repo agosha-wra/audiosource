@@ -99,11 +99,13 @@ plugins: []
         config_path = cls._create_beets_config(library_path)
         
         try:
-            # Run beets import in pretend mode with timid flag for all candidates
+            # Run beets import in pretend mode (non-interactive)
+            # -p = pretend (don't actually import, just show what would happen)
+            # NOT using -t (timid) as it requires interactive input
             result = subprocess.run(
                 [
                     "beet", "-c", config_path,
-                    "import", "-p", "-t", folder_path
+                    "import", "-p", folder_path
                 ],
                 capture_output=True,
                 text=True,
