@@ -801,7 +801,7 @@ class SlskdService:
                             "confidence": best_match.confidence
                         })
                         # Move files to library
-                        return self._move_files_to_library(download, download_folder, music_dir)
+                        return self._move_files_to_library(download, download_folder)
                     else:
                         print(f"slskd: Auto-apply failed, falling back to pending_review")
                         # Fall through to pending_review
