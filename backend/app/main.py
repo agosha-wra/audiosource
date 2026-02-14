@@ -1383,20 +1383,6 @@ def get_download(download_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Download not found")
     
     return _build_download_response(download)
-        artist_name=download.artist_name,
-        album_title=download.album_title,
-        slskd_username=download.slskd_username,
-        total_files=download.total_files,
-        completed_files=download.completed_files,
-        total_bytes=download.total_bytes,
-        completed_bytes=download.completed_bytes,
-        status=download.status,
-        error_message=download.error_message,
-        created_at=download.created_at,
-        started_at=download.started_at,
-        completed_at=download.completed_at,
-        progress_percent=round(progress, 1)
-    )
 
 
 @app.post("/api/downloads/{download_id}/move")
