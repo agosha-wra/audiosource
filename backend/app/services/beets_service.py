@@ -53,9 +53,6 @@ class BeetsService:
     @classmethod
     def _create_beets_config(cls, library_path: str) -> str:
         """Create a temporary beets config file."""
-        # Get acoustid API key from environment (optional but recommended)
-        acoustid_key = os.environ.get("ACOUSTID_API_KEY", "")
-        
         config = f"""
 directory: {library_path}
 library: /tmp/beets_temp.db
@@ -72,17 +69,9 @@ match:
     preferred:
         countries: ['US', 'GB', 'XW']
         media: ['Digital Media', 'CD']
-    
-# Enable acoustic fingerprinting for better matching
-plugins: [chroma]
 
-chroma:
-    auto: yes
+plugins: []
 """
-        # Add acoustid key if available
-        if acoustid_key:
-            config += f"acoustid:\n    apikey: {acoustid_key}\n"
-        
         config_file = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
         config_file.write(config)
         config_file.close()
