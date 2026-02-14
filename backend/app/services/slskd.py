@@ -487,6 +487,20 @@ class SlskdService:
         elif num_tracks < 5:
             score -= 5
         
+        # Penalty for duplicate-pattern filenames (e.g., track_1.mp3, track (1).mp3)
+        # These indicate a messy source with renamed duplicates
+        duplicate_patterns = 0
+        for f in files:
+            filename = f.get("filename", "").lower()
+            # Match patterns like: _1.mp3, _2.mp3, (1).mp3, (2).mp3, - Copy.mp3
+            if any(p in filename for p in ['_1.', '_2.', '_3.', '(1).', '(2).', '(3).', ' copy.', ' - copy.']):
+                duplicate_patterns += 1
+        
+        if duplicate_patterns > 0:
+            # Heavy penalty - this folder has duplicates
+            score -= 30 + (duplicate_patterns * 10)
+            print(f"slskd:     Penalty for {duplicate_patterns} duplicate-pattern files")
+        
         return max(score, 0)
     
     def update_download_progress(self, download_id: int) -> Optional[Download]:
