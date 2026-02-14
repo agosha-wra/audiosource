@@ -4,23 +4,24 @@ Uses beets to identify albums and fix tags before importing to library.
 """
 
 import subprocess
-import json
+import re
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 
 
 @dataclass
 class BeetsCandidate:
     """Represents a potential album match from beets."""
-    id: str  # MusicBrainz album ID
+    id: str  # MusicBrainz release ID
     artist: str
     album: str
     year: Optional[int]
     tracks: int
     distance: float  # 0.0 = perfect match, 1.0 = no match
+    musicbrainz_url: Optional[str] = None
     
     @property
     def confidence(self) -> float:
@@ -36,14 +37,18 @@ class BeetsCandidate:
             "tracks": self.tracks,
             "distance": self.distance,
             "confidence": self.confidence,
+            "musicbrainz_url": self.musicbrainz_url,
         }
 
 
 class BeetsService:
     """Service for interacting with beets for music tagging."""
     
-    # Confidence threshold for auto-applying (95%)
-    AUTO_APPLY_THRESHOLD = 0.05  # distance <= 0.05 means >= 95% confidence
+    # Confidence threshold for auto-applying (disabled - always require review)
+    AUTO_APPLY_THRESHOLD = 0.0  # Set to 0 to always require review
+    
+    # MusicBrainz release ID pattern (UUID format)
+    MB_ID_PATTERN = re.compile(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', re.IGNORECASE)
     
     @classmethod
     def _create_beets_config(cls, library_path: str) -> str:
@@ -60,7 +65,7 @@ import:
     quiet: no
     
 match:
-    strong_rec_thresh: 0.05
+    strong_rec_thresh: 0.04
     
 plugins: []
 """
@@ -74,13 +79,6 @@ plugins: []
         """
         Check an album folder against MusicBrainz using beets.
         Returns list of potential matches sorted by confidence.
-        
-        Args:
-            folder_path: Path to the folder containing downloaded files
-            library_path: Path to the music library (for beets config)
-            
-        Returns:
-            List of BeetsCandidate objects, sorted by confidence (best first)
         """
         candidates = []
         
@@ -88,13 +86,17 @@ plugins: []
             print(f"beets: Folder not found: {folder_path}")
             return candidates
         
-        # Create temporary beets config
+        # List files in folder for debugging
+        try:
+            files = list(Path(folder_path).glob("*"))
+            print(f"beets: Checking folder with {len(files)} files: {folder_path}")
+        except Exception as e:
+            print(f"beets: Error listing folder: {e}")
+        
         config_path = cls._create_beets_config(library_path)
         
         try:
-            # Run beets import in pretend mode with verbose output
-            # -p = pretend (don't actually import)
-            # -t = timid (always ask, which gives us all candidates in verbose mode)
+            # Run beets import in pretend mode with timid flag for all candidates
             result = subprocess.run(
                 [
                     "beet", "-c", config_path,
@@ -102,12 +104,17 @@ plugins: []
                 ],
                 capture_output=True,
                 text=True,
-                timeout=120,  # 2 minute timeout
+                timeout=120,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
             
-            # Parse the output to extract candidates
-            candidates = cls._parse_beets_output(result.stdout + result.stderr)
+            full_output = result.stdout + "\n" + result.stderr
+            print(f"beets: Raw output:\n{full_output[:2000]}")  # Log first 2000 chars
+            
+            candidates = cls._parse_beets_output(full_output)
+            print(f"beets: Parsed {len(candidates)} candidates")
+            for c in candidates:
+                print(f"beets:   - {c.artist} - {c.album} ({c.confidence}%) MB: {c.id}")
             
         except subprocess.TimeoutExpired:
             print(f"beets: Timeout checking {folder_path}")
@@ -115,8 +122,9 @@ plugins: []
             print("beets: beet command not found - is beets installed?")
         except Exception as e:
             print(f"beets: Error checking album: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
-            # Clean up temp config
             try:
                 os.unlink(config_path)
             except:
@@ -126,105 +134,124 @@ plugins: []
     
     @classmethod
     def _parse_beets_output(cls, output: str) -> List[BeetsCandidate]:
-        """Parse beets output to extract match candidates."""
+        """Parse beets output to extract match candidates with MusicBrainz IDs."""
         candidates = []
-        
-        # Beets output format varies, but typically shows candidates like:
-        # Tagging:
-        #     Artist - Album
-        # (Similarity: 95.2%) Artist - Album, 2020, 12 tracks
-        # ...
-        
         lines = output.split('\n')
-        current_similarity = None
         
-        for line in lines:
-            line = line.strip()
+        current_candidate = {}
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
             
-            # Look for similarity percentage
-            if '(Similarity:' in line:
+            # Look for MusicBrainz URL (contains the release ID)
+            if 'musicbrainz.org/release/' in line.lower():
+                mb_match = cls.MB_ID_PATTERN.search(line)
+                if mb_match:
+                    current_candidate['mb_id'] = mb_match.group(0)
+                    current_candidate['mb_url'] = f"https://musicbrainz.org/release/{mb_match.group(0)}"
+            
+            # Look for similarity percentage - various formats beets uses
+            # Format 1: "(Similarity: 95.2%)"
+            # Format 2: "95.2% similar"
+            # Format 3: "(95.2%)"
+            similarity_match = re.search(r'\(Similarity:\s*(\d+\.?\d*)%\)', line_stripped)
+            if not similarity_match:
+                similarity_match = re.search(r'(\d+\.?\d*)%\s*similar', line_stripped)
+            if not similarity_match:
+                similarity_match = re.search(r'\((\d+\.?\d*)%\)', line_stripped)
+            
+            if similarity_match:
                 try:
-                    # Extract similarity percentage
-                    sim_start = line.find('(Similarity:') + len('(Similarity:')
-                    sim_end = line.find('%', sim_start)
-                    similarity = float(line[sim_start:sim_end].strip())
+                    similarity = float(similarity_match.group(1))
                     distance = 1.0 - (similarity / 100.0)
+                    current_candidate['distance'] = distance
                     
-                    # Extract rest of info after the percentage
-                    rest = line[sim_end + 2:].strip()  # Skip "%) "
+                    # Try to extract artist - album from the same line
+                    # Remove the similarity part and parse the rest
+                    rest = re.sub(r'\(Similarity:\s*\d+\.?\d*%\)', '', line_stripped)
+                    rest = re.sub(r'\(\d+\.?\d*%\)', '', rest)
+                    rest = rest.strip()
                     
-                    # Parse "Artist - Album, Year, N tracks" or similar
-                    parts = rest.split(' - ', 1)
-                    if len(parts) >= 2:
-                        artist = parts[0].strip()
-                        album_info = parts[1]
+                    if ' - ' in rest:
+                        parts = rest.split(' - ', 1)
+                        current_candidate['artist'] = parts[0].strip()
+                        album_part = parts[1]
                         
-                        # Try to extract year and tracks
-                        album_parts = album_info.split(', ')
-                        album = album_parts[0].strip()
-                        year = None
-                        tracks = 0
+                        # Parse album, year, tracks from "Album, 2020, 12 tracks"
+                        album_parts = album_part.split(', ')
+                        current_candidate['album'] = album_parts[0].strip()
                         
                         for part in album_parts[1:]:
                             part = part.strip()
                             if part.isdigit() and len(part) == 4:
-                                year = int(part)
+                                current_candidate['year'] = int(part)
                             elif 'track' in part.lower():
                                 try:
-                                    tracks = int(part.split()[0])
+                                    current_candidate['tracks'] = int(part.split()[0])
                                 except:
                                     pass
+                    
+                    # If we have enough info, create a candidate
+                    if 'artist' in current_candidate and 'album' in current_candidate:
+                        candidate = BeetsCandidate(
+                            id=current_candidate.get('mb_id', f"unknown_{hash(str(current_candidate))}"),
+                            artist=current_candidate['artist'],
+                            album=current_candidate['album'],
+                            year=current_candidate.get('year'),
+                            tracks=current_candidate.get('tracks', 0),
+                            distance=current_candidate['distance'],
+                            musicbrainz_url=current_candidate.get('mb_url')
+                        )
+                        candidates.append(candidate)
+                        current_candidate = {}  # Reset for next candidate
                         
-                        # Generate a pseudo-ID (in real implementation would extract MB ID)
-                        candidate_id = f"mb_{hash(f'{artist}_{album}_{year}')}"
-                        
-                        candidates.append(BeetsCandidate(
-                            id=candidate_id,
-                            artist=artist,
-                            album=album,
-                            year=year,
-                            tracks=tracks,
-                            distance=distance
-                        ))
                 except Exception as e:
-                    print(f"beets: Error parsing line '{line}': {e}")
-                    continue
+                    print(f"beets: Error parsing similarity line '{line_stripped}': {e}")
             
-            # Also look for "Finding tags for..." or track listing patterns
-            elif line.startswith('Finding tags for'):
-                # This just indicates the album being checked
-                pass
+            # Also try to catch "Tagging:" section which indicates the recommended match
+            if line_stripped.startswith('Tagging:'):
+                # Next non-empty line should be "Artist - Album"
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    next_line = lines[j].strip()
+                    if next_line and ' - ' in next_line:
+                        parts = next_line.split(' - ', 1)
+                        if len(parts) == 2:
+                            current_candidate['artist'] = parts[0].strip()
+                            current_candidate['album'] = parts[1].strip()
+                        break
         
         # Sort by confidence (lowest distance first)
         candidates.sort(key=lambda c: c.distance)
         
-        return candidates
+        # Remove duplicates based on MB ID
+        seen_ids = set()
+        unique_candidates = []
+        for c in candidates:
+            if c.id not in seen_ids:
+                seen_ids.add(c.id)
+                unique_candidates.append(c)
+        
+        return unique_candidates
     
     @classmethod
     def apply_tags(cls, folder_path: str, match_id: Optional[str] = None, 
-                   library_path: str = "/music") -> bool:
+                   library_path: str = "/music") -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Apply beets tagging to an album folder.
         
-        Args:
-            folder_path: Path to the folder containing files to tag
-            match_id: Optional specific match ID to use (not yet implemented)
-            library_path: Path to the music library
-            
         Returns:
-            True if tagging was successful, False otherwise
+            Tuple of (success, applied_match_info)
+            applied_match_info contains details about what was applied
         """
         if not os.path.exists(folder_path):
             print(f"beets: Folder not found: {folder_path}")
-            return False
+            return False, None
         
-        # Create temporary beets config
         config_path = cls._create_beets_config(library_path)
+        applied_info = None
         
         try:
             # Run beets import with auto-tagging
-            # -q = quiet (accept best match automatically)
-            # --flat = don't create subdirectories
             result = subprocess.run(
                 [
                     "beet", "-c", config_path,
@@ -232,30 +259,55 @@ plugins: []
                 ],
                 capture_output=True,
                 text=True,
-                timeout=180,  # 3 minute timeout
+                timeout=180,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
             
+            full_output = result.stdout + "\n" + result.stderr
+            print(f"beets: Apply output:\n{full_output[:2000]}")
+            
+            # Try to extract what was applied
+            mb_match = cls.MB_ID_PATTERN.search(full_output)
+            if mb_match:
+                applied_info = {
+                    "musicbrainz_id": mb_match.group(0),
+                    "musicbrainz_url": f"https://musicbrainz.org/release/{mb_match.group(0)}",
+                    "status": "applied"
+                }
+            else:
+                applied_info = {
+                    "status": "applied_unknown",
+                    "note": "Tags applied but could not extract MusicBrainz ID"
+                }
+            
             if result.returncode == 0:
                 print(f"beets: Successfully tagged {folder_path}")
-                return True
+                return True, applied_info
             else:
-                print(f"beets: Tagging failed: {result.stderr}")
-                return False
+                # Check if it's a "no match" situation
+                if 'no suitable match' in full_output.lower() or 'skipping' in full_output.lower():
+                    applied_info = {"status": "no_match", "note": "No suitable match found"}
+                    print(f"beets: No match found for {folder_path}")
+                else:
+                    applied_info = {"status": "failed", "error": result.stderr[:500]}
+                    print(f"beets: Tagging failed: {result.stderr}")
+                return False, applied_info
                 
         except subprocess.TimeoutExpired:
             print(f"beets: Timeout tagging {folder_path}")
-            return False
+            return False, {"status": "timeout"}
         except FileNotFoundError:
             print("beets: beet command not found - is beets installed?")
-            return False
+            return False, {"status": "not_installed"}
         except Exception as e:
             print(f"beets: Error applying tags: {e}")
-            return False
+            return False, {"status": "error", "error": str(e)}
         finally:
-            # Clean up temp config and database
             try:
                 os.unlink(config_path)
+            except:
+                pass
+            try:
                 os.unlink("/tmp/beets_temp.db")
             except:
                 pass
@@ -263,29 +315,8 @@ plugins: []
     @classmethod
     def should_auto_apply(cls, candidates: List[BeetsCandidate]) -> bool:
         """
-        Determine if we should auto-apply tags based on match confidence.
-        
-        Returns True if:
-        - There's exactly one candidate with >= 95% confidence
-        - Or the best candidate has >= 95% confidence and is clearly better than others
+        Determine if we should auto-apply tags.
+        Currently disabled - always returns False to require user review.
         """
-        if not candidates:
-            return False
-        
-        best = candidates[0]
-        
-        # Check if best match meets threshold
-        if best.distance > cls.AUTO_APPLY_THRESHOLD:
-            return False
-        
-        # If there's only one candidate, auto-apply
-        if len(candidates) == 1:
-            return True
-        
-        # If best is significantly better than second best (>10% difference), auto-apply
-        second = candidates[1]
-        if second.distance - best.distance >= 0.10:
-            return True
-        
-        # Multiple close candidates - let user choose
+        # Disabled - always require user review for safety
         return False

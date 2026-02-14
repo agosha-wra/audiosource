@@ -216,6 +216,17 @@ class BeetsCandidateResponse(BaseModel):
     tracks: int
     distance: float
     confidence: float
+    musicbrainz_url: Optional[str] = None
+
+
+class BeetsAppliedMatchResponse(BaseModel):
+    """Information about the beets match that was applied."""
+    status: str  # applied, skipped, no_match, failed, etc.
+    musicbrainz_id: Optional[str] = None
+    musicbrainz_url: Optional[str] = None
+    note: Optional[str] = None
+    error: Optional[str] = None
+    selected_match_id: Optional[str] = None
 
 
 class DownloadResponse(BaseModel):
@@ -235,6 +246,7 @@ class DownloadResponse(BaseModel):
     completed_at: Optional[datetime] = None
     progress_percent: float = 0
     beets_candidates: Optional[List[BeetsCandidateResponse]] = None
+    beets_applied_match: Optional[BeetsAppliedMatchResponse] = None
 
     class Config:
         from_attributes = True

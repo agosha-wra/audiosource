@@ -301,6 +301,38 @@ export default function DownloadsView() {
                     <> • Completed: {formatDate(download.completed_at)}</>
                   )}
                 </div>
+
+                {/* Beets tagging info for moved downloads */}
+                {download.beets_applied_match && (
+                  <div className="beets-info">
+                    {download.beets_applied_match.status === 'applied' && download.beets_applied_match.musicbrainz_url ? (
+                      <>
+                        <span className="beets-status beets-success">Tags Applied</span>
+                        <a 
+                          href={download.beets_applied_match.musicbrainz_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="mb-link"
+                        >
+                          View on MusicBrainz
+                        </a>
+                      </>
+                    ) : download.beets_applied_match.status === 'applied_unknown' ? (
+                      <span className="beets-status beets-warning">Tags Applied (no MB link)</span>
+                    ) : download.beets_applied_match.status === 'skipped' ? (
+                      <span className="beets-status beets-skipped">Tagging Skipped</span>
+                    ) : download.beets_applied_match.status === 'no_match' ? (
+                      <span className="beets-status beets-warning">No Match Found</span>
+                    ) : download.beets_applied_match.status === 'failed' ? (
+                      <span className="beets-status beets-error">Tagging Failed</span>
+                    ) : (
+                      <span className="beets-status">{download.beets_applied_match.status}</span>
+                    )}
+                    {download.beets_applied_match.note && (
+                      <span className="beets-note">{download.beets_applied_match.note}</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="download-actions">
@@ -407,6 +439,17 @@ export default function DownloadsView() {
                           }}>
                             {candidate.confidence.toFixed(1)}% match
                           </span>
+                          {candidate.musicbrainz_url && (
+                            <a 
+                              href={candidate.musicbrainz_url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="mb-link-small"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              MB
+                            </a>
+                          )}
                         </div>
                       </div>
                       <button 
@@ -603,6 +646,66 @@ export default function DownloadsView() {
           font-size: 12px;
           color: var(--text-muted);
           margin-top: 8px;
+        }
+
+        .beets-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-top: 10px;
+          padding: 8px 12px;
+          background: var(--bg-secondary);
+          border-radius: 6px;
+          font-size: 13px;
+        }
+
+        .beets-status {
+          font-weight: 500;
+        }
+
+        .beets-status.beets-success {
+          color: var(--accent-green);
+        }
+
+        .beets-status.beets-warning {
+          color: var(--accent-yellow);
+        }
+
+        .beets-status.beets-skipped {
+          color: var(--text-muted);
+        }
+
+        .beets-status.beets-error {
+          color: var(--accent-red);
+        }
+
+        .beets-note {
+          color: var(--text-secondary);
+          font-size: 12px;
+        }
+
+        .mb-link {
+          color: var(--accent-primary);
+          text-decoration: none;
+          font-weight: 500;
+        }
+
+        .mb-link:hover {
+          text-decoration: underline;
+        }
+
+        .mb-link-small {
+          color: var(--accent-primary);
+          text-decoration: none;
+          font-size: 12px;
+          font-weight: 500;
+          padding: 2px 6px;
+          background: var(--bg-secondary);
+          border-radius: 4px;
+        }
+
+        .mb-link-small:hover {
+          background: var(--bg-hover);
         }
 
         .download-actions {

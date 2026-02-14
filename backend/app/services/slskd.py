@@ -885,9 +885,11 @@ class SlskdService:
         
         Args:
             download_id: ID of the download
-            match_id: Optional specific match ID (not used yet - beets applies best match)
+            match_id: Optional specific match ID (MusicBrainz release ID)
             skip_tagging: If True, skip beets tagging and just move files
         """
+        import json
+        
         download = self.db.query(Download).filter(Download.id == download_id).first()
         if not download:
             return False
@@ -904,9 +906,23 @@ class SlskdService:
             music_dir = Path(get_settings().music_folder)
             
             # Apply beets tagging if not skipping
+            applied_info = None
             if not skip_tagging:
                 print(f"slskd: Applying beets tags for {download.artist_name} - {download.album_title}")
-                BeetsService.apply_tags(str(download_folder), match_id, str(music_dir))
+                success, applied_info = BeetsService.apply_tags(str(download_folder), match_id, str(music_dir))
+                
+                # Store the applied match info
+                if applied_info:
+                    # If user selected a specific match, include that info
+                    if match_id:
+                        applied_info['selected_match_id'] = match_id
+                    download.beets_applied_match = json.dumps(applied_info)
+            else:
+                # User skipped tagging
+                download.beets_applied_match = json.dumps({
+                    "status": "skipped",
+                    "note": "User chose to skip tagging"
+                })
             
             # Clear candidates and move files
             download.beets_candidates = None

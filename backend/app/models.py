@@ -156,6 +156,8 @@ class Download(Base):
     
     # Beets tagging candidates (JSON array of match options)
     beets_candidates = Column(Text, nullable=True)
+    # Beets applied match info (JSON with applied match details including MB ID)
+    beets_applied_match = Column(Text, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)

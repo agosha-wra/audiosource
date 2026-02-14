@@ -133,6 +133,16 @@ export interface BeetsCandidate {
   tracks: number;
   distance: number;
   confidence: number;
+  musicbrainz_url: string | null;
+}
+
+export interface BeetsAppliedMatch {
+  status: string;  // applied, skipped, no_match, failed, etc.
+  musicbrainz_id?: string | null;
+  musicbrainz_url?: string | null;
+  note?: string | null;
+  error?: string | null;
+  selected_match_id?: string | null;
 }
 
 export interface Download {
@@ -152,6 +162,7 @@ export interface Download {
   completed_at: string | null;
   progress_percent: number;
   beets_candidates?: BeetsCandidate[] | null;
+  beets_applied_match?: BeetsAppliedMatch | null;
 }
 
 export interface SlskdStatus {

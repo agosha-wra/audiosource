@@ -31,6 +31,7 @@ from app.schemas import (
     AppSettingsResponse,
     SlskdSettingsResponse,
     BeetsCandidateResponse,
+    BeetsAppliedMatchResponse,
 )
 from app.config import get_settings
 from difflib import SequenceMatcher
@@ -57,6 +58,19 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE downloads ADD COLUMN beets_candidates TEXT"))
                 conn.commit()
                 print("Migration: Added beets_candidates column to downloads table")
+        except Exception as e:
+            print(f"Migration check failed (may be normal on first run): {e}")
+        
+        # Check and add beets_applied_match column to downloads table
+        try:
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'downloads' AND column_name = 'beets_applied_match'"
+            ))
+            if result.fetchone() is None:
+                conn.execute(text("ALTER TABLE downloads ADD COLUMN beets_applied_match TEXT"))
+                conn.commit()
+                print("Migration: Added beets_applied_match column to downloads table")
         except Exception as e:
             print(f"Migration check failed (may be normal on first run): {e}")
 
@@ -1257,39 +1271,61 @@ def get_slskd_status(db: Session = Depends(get_db)):
     )
 
 
+def _build_download_response(download: Download) -> DownloadResponse:
+    """Helper to build DownloadResponse with parsed beets JSON fields."""
+    import json
+    
+    progress = 0
+    if download.total_bytes > 0:
+        progress = (download.completed_bytes / download.total_bytes) * 100
+    elif download.total_files > 0:
+        progress = (download.completed_files / download.total_files) * 100
+    
+    # Parse beets candidates JSON
+    beets_candidates = None
+    if download.beets_candidates:
+        try:
+            candidates_data = json.loads(download.beets_candidates)
+            beets_candidates = [BeetsCandidateResponse(**c) for c in candidates_data]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    # Parse beets applied match JSON
+    beets_applied_match = None
+    if download.beets_applied_match:
+        try:
+            applied_data = json.loads(download.beets_applied_match)
+            beets_applied_match = BeetsAppliedMatchResponse(**applied_data)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    
+    return DownloadResponse(
+        id=download.id,
+        album_id=download.album_id,
+        artist_name=download.artist_name,
+        album_title=download.album_title,
+        slskd_username=download.slskd_username,
+        total_files=download.total_files,
+        completed_files=download.completed_files,
+        total_bytes=download.total_bytes,
+        completed_bytes=download.completed_bytes,
+        status=download.status,
+        error_message=download.error_message,
+        created_at=download.created_at,
+        started_at=download.started_at,
+        completed_at=download.completed_at,
+        progress_percent=round(progress, 1),
+        beets_candidates=beets_candidates,
+        beets_applied_match=beets_applied_match,
+    )
+
+
 @app.get("/api/downloads", response_model=List[DownloadResponse])
 def get_downloads(db: Session = Depends(get_db)):
     """Get all downloads."""
     service = SlskdService(db)
     downloads = service.get_all_downloads()
-    
-    result = []
-    for download in downloads:
-        progress = 0
-        if download.total_bytes > 0:
-            progress = (download.completed_bytes / download.total_bytes) * 100
-        elif download.total_files > 0:
-            progress = (download.completed_files / download.total_files) * 100
-        
-        result.append(DownloadResponse(
-            id=download.id,
-            album_id=download.album_id,
-            artist_name=download.artist_name,
-            album_title=download.album_title,
-            slskd_username=download.slskd_username,
-            total_files=download.total_files,
-            completed_files=download.completed_files,
-            total_bytes=download.total_bytes,
-            completed_bytes=download.completed_bytes,
-            status=download.status,
-            error_message=download.error_message,
-            created_at=download.created_at,
-            started_at=download.started_at,
-            completed_at=download.completed_at,
-            progress_percent=round(progress, 1)
-        ))
-    
-    return result
+    return [_build_download_response(d) for d in downloads]
 
 
 @app.post("/api/downloads/{album_id}", response_model=DownloadResponse)
@@ -1334,23 +1370,7 @@ def start_download(
     # Start download in background - pass download_id, not album_id
     background_tasks.add_task(run_download_in_background, download.id)
     
-    return DownloadResponse(
-        id=download.id,
-        album_id=download.album_id,
-        artist_name=download.artist_name,
-        album_title=download.album_title,
-        slskd_username=download.slskd_username,
-        total_files=download.total_files,
-        completed_files=download.completed_files,
-        total_bytes=download.total_bytes,
-        completed_bytes=download.completed_bytes,
-        status=download.status,
-        error_message=download.error_message,
-        created_at=download.created_at,
-        started_at=download.started_at,
-        completed_at=download.completed_at,
-        progress_percent=0
-    )
+    return _build_download_response(download)
 
 
 @app.get("/api/downloads/{download_id}", response_model=DownloadResponse)
@@ -1362,15 +1382,7 @@ def get_download(download_id: int, db: Session = Depends(get_db)):
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
     
-    progress = 0
-    if download.total_bytes > 0:
-        progress = (download.completed_bytes / download.total_bytes) * 100
-    elif download.total_files > 0:
-        progress = (download.completed_files / download.total_files) * 100
-    
-    return DownloadResponse(
-        id=download.id,
-        album_id=download.album_id,
+    return _build_download_response(download)
         artist_name=download.artist_name,
         album_title=download.album_title,
         slskd_username=download.slskd_username,
@@ -1475,29 +1487,7 @@ def cancel_download(
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
     
-    progress = 0
-    if download.total_bytes > 0:
-        progress = (download.completed_bytes / download.total_bytes) * 100
-    elif download.total_files > 0:
-        progress = (download.completed_files / download.total_files) * 100
-    
-    return DownloadResponse(
-        id=download.id,
-        album_id=download.album_id,
-        artist_name=download.artist_name,
-        album_title=download.album_title,
-        slskd_username=download.slskd_username,
-        total_files=download.total_files,
-        completed_files=download.completed_files,
-        total_bytes=download.total_bytes,
-        completed_bytes=download.completed_bytes,
-        status=download.status,
-        error_message=download.error_message,
-        created_at=download.created_at,
-        started_at=download.started_at,
-        completed_at=download.completed_at,
-        progress_percent=round(progress, 1)
-    )
+    return _build_download_response(download)
 
 
 @app.post("/api/downloads/{download_id}/retry", response_model=DownloadResponse)
@@ -1526,24 +1516,7 @@ def retry_download(
     # Start retry in background
     background_tasks.add_task(run_download_in_background, download.id)
     
-    progress = 0
-    return DownloadResponse(
-        id=download.id,
-        album_id=download.album_id,
-        artist_name=download.artist_name,
-        album_title=download.album_title,
-        slskd_username=download.slskd_username,
-        total_files=download.total_files,
-        completed_files=download.completed_files,
-        total_bytes=download.total_bytes,
-        completed_bytes=download.completed_bytes,
-        status=download.status,
-        error_message=download.error_message,
-        created_at=download.created_at,
-        started_at=download.started_at,
-        completed_at=download.completed_at,
-        progress_percent=progress
-    )
+    return _build_download_response(download)
 
 
 @app.delete("/api/downloads/{download_id}")
