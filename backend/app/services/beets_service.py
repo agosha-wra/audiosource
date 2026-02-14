@@ -71,7 +71,8 @@ match:
         media: ['Digital Media', 'CD']
 
 # IMPORTANT: musicbrainz plugin MUST be loaded for MusicBrainz searches to work
-plugins: [musicbrainz]
+# deezer and spotify provide additional metadata sources
+plugins: [musicbrainz, deezer, spotify]
 """
         config_file = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
         config_file.write(config)
