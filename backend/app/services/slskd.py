@@ -758,34 +758,46 @@ class SlskdService:
             download_folder = self._find_download_folder(download)
             if not download_folder:
                 print(f"slskd: Could not find download folder for {download.artist_name} - {download.album_title}")
-                return False
+                # Still allow moving without beets if folder not found in expected location
+                # Try to find and move files anyway
+                download_dir = Path(slskd_config.download_dir)
+                if download.slskd_username:
+                    fallback_folder = download_dir / download.slskd_username
+                    if fallback_folder.exists():
+                        download_folder = fallback_folder
+                        print(f"slskd: Using fallback folder: {fallback_folder}")
+                    else:
+                        print(f"slskd: Fallback folder not found either: {fallback_folder}")
+                        return False
+                else:
+                    return False
             
             music_dir = Path(get_settings().music_folder)
             
             # Run beets check on the download folder
             print(f"slskd: Checking album tags with beets for {download.artist_name} - {download.album_title}")
+            print(f"slskd: Download folder: {download_folder}")
+            
+            # Check if beets command exists
+            import shutil
+            beets_path = shutil.which("beet")
+            print(f"slskd: Beets command path: {beets_path}")
+            
             candidates = BeetsService.check_album_match(str(download_folder), str(music_dir))
+            
+            # Always set to pending_review for user to decide
+            # Store candidates (may be empty list)
+            download.beets_candidates = json.dumps([c.to_dict() for c in candidates] if candidates else [])
+            download.status = "pending_review"
+            self.db.commit()
             
             if candidates:
                 print(f"slskd: Found {len(candidates)} beets candidates, best match: {candidates[0].confidence}%")
-                
-                # Check if we should auto-apply
-                if BeetsService.should_auto_apply(candidates):
-                    print(f"slskd: Auto-applying beets tags (confidence: {candidates[0].confidence}%)")
-                    BeetsService.apply_tags(str(download_folder), None, str(music_dir))
-                    # Continue to move files
-                else:
-                    # Store candidates and set status to pending_review
-                    download.beets_candidates = json.dumps([c.to_dict() for c in candidates])
-                    download.status = "pending_review"
-                    self.db.commit()
-                    print(f"slskd: Download {download_id} set to pending_review - user action required")
-                    return True
             else:
-                print(f"slskd: No beets matches found, proceeding without tagging")
+                print(f"slskd: No beets matches found - user must choose to skip tagging")
             
-            # Move files to library
-            return self._move_files_to_library(download, download_folder)
+            print(f"slskd: Download {download_id} set to pending_review - user action required")
+            return True
             
         except Exception as e:
             print(f"slskd: Error in move_completed_download: {e}")
