@@ -295,9 +295,9 @@ plugins: [musicbrainz, deezer, spotify]
         
         try:
             # Build command
-            # -q = quiet (don't ask, just apply best match)
             # --flat = don't use album directories
-            cmd = ["beet", "-c", config_path, "import", "-q", "--flat"]
+            # NOT using -q because it skips albums without strong match
+            cmd = ["beet", "-c", config_path, "import", "--flat"]
             
             # If we have a specific ID, use --search-id to guide beets
             if match_id:
@@ -308,12 +308,13 @@ plugins: [musicbrainz, deezer, spotify]
             
             print(f"beets: Running: {' '.join(cmd)}")
             
-            # Run beets import
+            # Run beets import, send 'a' (apply) to accept the best match
+            # Send multiple 'a's in case there are multiple prompts
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                input="",  # No stdin
+                input="a\na\na\na\na\n",  # Apply best match
                 timeout=180,
                 env={**os.environ, "BEETSDIR": "/tmp"}
             )
