@@ -445,10 +445,13 @@ def delete_album(album_id: int, db: Session = Depends(get_db)):
             # Artist has no albums left, delete the artist
             artist = db.query(Artist).filter(Artist.id == artist_id).first()
             if artist:
-                # Unlink vinyl releases from this artist first
-                from app.models import VinylRelease
+                # Unlink vinyl releases and concerts from this artist first
+                from app.models import VinylRelease, Concert
                 db.query(VinylRelease).filter(VinylRelease.matched_artist_id == artist_id).update(
                     {"matched_artist_id": None}
+                )
+                db.query(Concert).filter(Concert.artist_id == artist_id).update(
+                    {"artist_id": None}
                 )
                 db.delete(artist)
                 db.commit()
@@ -709,7 +712,7 @@ def delete_artist(artist_id: int, db: Session = Depends(get_db)):
     Delete an artist and all their non-owned albums.
     Cannot delete artists that have owned albums.
     """
-    from app.models import VinylRelease
+    from app.models import VinylRelease, Concert
     
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
@@ -731,6 +734,16 @@ def delete_artist(artist_id: int, db: Session = Depends(get_db)):
     db.query(VinylRelease).filter(VinylRelease.matched_artist_id == artist_id).update(
         {"matched_artist_id": None}
     )
+    
+    # Unlink concerts from this artist (set artist_id to NULL)
+    db.query(Concert).filter(Concert.artist_id == artist_id).update(
+        {"artist_id": None}
+    )
+    
+    # Delete downloads associated with albums being deleted
+    album_ids = [a.id for a in db.query(Album).filter(Album.artist_id == artist_id).all()]
+    if album_ids:
+        db.query(Download).filter(Download.album_id.in_(album_ids)).delete(synchronize_session=False)
 
     # Delete all non-owned albums for this artist
     db.query(Album).filter(Album.artist_id == artist_id).delete()
@@ -951,10 +964,13 @@ def remove_from_wishlist(album_id: int, db: Session = Depends(get_db)):
         if remaining_albums == 0:
             artist = db.query(Artist).filter(Artist.id == artist_id).first()
             if artist:
-                # Unlink vinyl releases from this artist first
-                from app.models import VinylRelease
+                # Unlink vinyl releases and concerts from this artist first
+                from app.models import VinylRelease, Concert
                 db.query(VinylRelease).filter(VinylRelease.matched_artist_id == artist_id).update(
                     {"matched_artist_id": None}
+                )
+                db.query(Concert).filter(Concert.artist_id == artist_id).update(
+                    {"artist_id": None}
                 )
                 db.delete(artist)
                 db.commit()
