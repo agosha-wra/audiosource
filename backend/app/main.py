@@ -218,6 +218,19 @@ async def scheduled_scan_loop():
                         print(f"Starting scheduled upcoming releases check at {now}")
                         thread = threading.Thread(target=run_upcoming_check_in_background)
                         thread.start()
+                    
+                    # Fetch missing albums (discography) daily - separate from upcoming releases
+                    should_fetch_discography = (
+                        upcoming_status.last_discography_fetch_at is None or
+                        (now - upcoming_status.last_discography_fetch_at) > timedelta(hours=24)
+                    )
+                    if should_fetch_discography and upcoming_status.status != "scanning":
+                        print(f"Starting scheduled fetch missing albums at {now}")
+                        # Update the timestamp before starting to prevent duplicate runs
+                        upcoming_status.last_discography_fetch_at = now
+                        db.commit()
+                        thread = threading.Thread(target=run_fetch_missing_albums_in_background)
+                        thread.start()
                 
                 # Check for vinyl releases hourly
                 from app.models import VinylReleasesScrapeStatus
@@ -306,6 +319,8 @@ async def startup_event():
                     error_message TEXT
                 )
             """))
+            # Add last_discography_fetch_at column for scheduled fetch missing albums
+            conn.execute(text("ALTER TABLE upcoming_releases_status ADD COLUMN IF NOT EXISTS last_discography_fetch_at TIMESTAMP"))
             conn.commit()
         except Exception as e:
             print(f"Migration note: {e}")

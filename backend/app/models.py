@@ -97,6 +97,7 @@ class UpcomingReleasesStatus(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     last_check_at = Column(DateTime, nullable=True)
+    last_discography_fetch_at = Column(DateTime, nullable=True)  # For daily fetch missing albums job
     error_message = Column(Text, nullable=True)
 
 
