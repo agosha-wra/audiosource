@@ -527,22 +527,49 @@ def list_artists(
     db: Session = Depends(get_db)
 ):
     """List all artists with album counts."""
-    query = db.query(Artist)
+    from sqlalchemy import func
     
+    # Subquery for owned album count
+    owned_count_subq = db.query(
+        Album.artist_id,
+        func.count(Album.id).label('owned_count')
+    ).filter(Album.is_owned == True).group_by(Album.artist_id).subquery()
+    
+    # Subquery for wishlisted album count
+    wishlisted_count_subq = db.query(
+        Album.artist_id,
+        func.count(Album.id).label('wishlisted_count')
+    ).filter(Album.is_owned == False, Album.is_wishlisted == True).group_by(Album.artist_id).subquery()
+    
+    # Base query with outerjoin to get counts
+    query = db.query(Artist).outerjoin(
+        owned_count_subq, Artist.id == owned_count_subq.c.artist_id
+    ).outerjoin(
+        wishlisted_count_subq, Artist.id == wishlisted_count_subq.c.artist_id
+    )
+
     # Apply search filter
     if search:
         query = query.filter(Artist.name.ilike(f"%{search}%"))
-    
+
     # Apply sorting
     if sort == "name":
         query = query.order_by(Artist.name)
     elif sort == "name_desc":
         query = query.order_by(Artist.name.desc())
     elif sort == "date_added":
-        query = query.order_by(Artist.id.desc())  # id as proxy for date added
+        query = query.order_by(Artist.id.desc())
+    elif sort == "owned_desc":
+        query = query.order_by(func.coalesce(owned_count_subq.c.owned_count, 0).desc(), Artist.name)
+    elif sort == "owned_asc":
+        query = query.order_by(func.coalesce(owned_count_subq.c.owned_count, 0).asc(), Artist.name)
+    elif sort == "wishlisted_desc":
+        query = query.order_by(func.coalesce(wishlisted_count_subq.c.wishlisted_count, 0).desc(), Artist.name)
+    elif sort == "wishlisted_asc":
+        query = query.order_by(func.coalesce(wishlisted_count_subq.c.wishlisted_count, 0).asc(), Artist.name)
     else:
         query = query.order_by(Artist.name)
-    
+
     artists = query.offset(skip).limit(limit).all()
     
     result = []

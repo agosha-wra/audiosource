@@ -23,6 +23,9 @@ const SORT_OPTIONS = [
   { value: 'name', label: 'Name (A-Z)' },
   { value: 'name_desc', label: 'Name (Z-A)' },
   { value: 'date_added', label: 'Recently Added' },
+  { value: 'owned_desc', label: 'Most Owned Albums' },
+  { value: 'owned_asc', label: 'Fewest Owned Albums' },
+  { value: 'wishlisted_desc', label: 'Most Wishlisted' },
 ];
 
 function getInitials(name: string): string {
