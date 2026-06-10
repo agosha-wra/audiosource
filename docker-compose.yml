@@ -29,6 +29,12 @@ services:
       SLSKD_DOWNLOAD_DIR: /downloads
       # Filter concerts to only show events in this city/country
       CONCERT_CITY: ${CONCERT_CITY:Paris}
+      # Run the backend as this UID/GID so files written into bind mounts
+      # (music library, downloads) are owned by your host user and other
+      # apps (e.g. Jellyfin) can manage/delete them. Override in .env if
+      # your host user has different ids: `id -u` / `id -g` to find them.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
     ports:
       - "8080:80"
     volumes:

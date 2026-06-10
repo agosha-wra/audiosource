@@ -8,7 +8,7 @@ import threading
 import asyncio
 
 from app.database import get_db, engine, Base, SessionLocal
-from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus, Download, AOTYEnrichmentStatus
+from app.models import Album, Artist, ScanStatus, ScanSchedule, UpcomingReleasesStatus, Download, AOTYEnrichmentStatus, NewReleasesScrapeStatus
 from app.schemas import (
     AlbumResponse,
     AlbumDetailResponse,
@@ -73,6 +73,19 @@ def run_migrations():
                 print("Migration: Added beets_applied_match column to downloads table")
         except Exception as e:
             print(f"Migration check failed (may be normal on first run): {e}")
+
+        for col in ("slskd_remote_folder", "local_folder_path"):
+            try:
+                result = conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    f"WHERE table_name = 'downloads' AND column_name = '{col}'"
+                ))
+                if result.fetchone() is None:
+                    conn.execute(text(f"ALTER TABLE downloads ADD COLUMN {col} TEXT"))
+                    conn.commit()
+                    print(f"Migration: Added {col} column to downloads table")
+            except Exception as e:
+                print(f"Migration check failed (may be normal on first run): {e}")
 
 run_migrations()
 
@@ -184,49 +197,61 @@ async def scheduled_scan_loop():
         try:
             db = SessionLocal()
             try:
+                now = datetime.utcnow()
+
+                # Compute today's nightly trigger time (UTC). Jobs are eligible
+                # any time after this point in the day, and will run at most
+                # once per calendar day by comparing against last-run timestamps.
+                nightly_hour = get_settings().nightly_scan_hour_utc
+                today_trigger = now.replace(
+                    hour=nightly_hour, minute=0, second=0, microsecond=0
+                )
+                nightly_window_open = now >= today_trigger
+
                 schedule = db.query(ScanSchedule).first()
-                if schedule and schedule.enabled:
-                    now = datetime.utcnow()
-                    
-                    # Check if it's time for a scan
-                    if schedule.next_scan_at and now >= schedule.next_scan_at:
-                        # Check if not already scanning
+                if schedule and schedule.enabled and nightly_window_open:
+                    # Run nightly library scan if we haven't already tonight
+                    if schedule.last_scan_at is None or schedule.last_scan_at < today_trigger:
                         status = db.query(ScanStatus).first()
-                        if not status or status.status != "scanning":
-                            print(f"Starting scheduled scan at {now}")
-                            # Run scan in background thread
+                        if not status or status.status not in ("scanning", "pending"):
+                            print(f"Starting nightly library scan at {now}")
                             thread = threading.Thread(
                                 target=run_scan_in_background,
                                 args=(False,)
                             )
                             thread.start()
-                            
-                            # Update schedule
+
                             schedule.last_scan_at = now
-                            schedule.next_scan_at = now + timedelta(hours=schedule.interval_hours)
+                            schedule.next_scan_at = today_trigger + timedelta(days=1)
                             db.commit()
-                
-                # Check for upcoming releases daily
+
+                # Nightly upcoming releases + fetch-missing albums
                 upcoming_status = db.query(UpcomingReleasesStatus).first()
-                if upcoming_status:
-                    # Run if never run or last check was more than 24 hours ago
+                if upcoming_status and nightly_window_open:
+                    upcoming_busy = upcoming_status.status in ("scanning", "pending")
+
                     should_check = (
-                        upcoming_status.last_check_at is None or
-                        (now - upcoming_status.last_check_at) > timedelta(hours=24)
+                        upcoming_status.last_check_at is None
+                        or upcoming_status.last_check_at < today_trigger
                     )
-                    if should_check and upcoming_status.status != "scanning":
-                        print(f"Starting scheduled upcoming releases check at {now}")
+                    if should_check and not upcoming_busy:
+                        print(f"Starting nightly upcoming releases check at {now}")
+                        # Mark preemptively so cancellations don't cause the
+                        # scheduler to re-trigger this run the same night.
+                        upcoming_status.last_check_at = now
+                        db.commit()
                         thread = threading.Thread(target=run_upcoming_check_in_background)
                         thread.start()
-                    
-                    # Fetch missing albums (discography) daily - separate from upcoming releases
+                        # Mark as busy locally so we don't also kick off the
+                        # fetch-missing job in this same tick.
+                        upcoming_busy = True
+
                     should_fetch_discography = (
-                        upcoming_status.last_discography_fetch_at is None or
-                        (now - upcoming_status.last_discography_fetch_at) > timedelta(hours=24)
+                        upcoming_status.last_discography_fetch_at is None
+                        or upcoming_status.last_discography_fetch_at < today_trigger
                     )
-                    if should_fetch_discography and upcoming_status.status != "scanning":
-                        print(f"Starting scheduled fetch missing albums at {now}")
-                        # Update the timestamp before starting to prevent duplicate runs
+                    if should_fetch_discography and not upcoming_busy:
+                        print(f"Starting nightly fetch missing albums at {now}")
                         upcoming_status.last_discography_fetch_at = now
                         db.commit()
                         thread = threading.Thread(target=run_fetch_missing_albums_in_background)
@@ -330,10 +355,15 @@ async def startup_event():
     try:
         schedule = db.query(ScanSchedule).first()
         if not schedule:
+            nightly_hour = get_settings().nightly_scan_hour_utc
+            now = datetime.utcnow()
+            next_trigger = now.replace(hour=nightly_hour, minute=0, second=0, microsecond=0)
+            if next_trigger <= now:
+                next_trigger += timedelta(days=1)
             schedule = ScanSchedule(
                 enabled=True,
-                interval_hours=24,
-                next_scan_at=datetime.utcnow() + timedelta(hours=24)
+                interval_hours=24,  # kept for backwards compatibility; scheduler uses nightly hour
+                next_scan_at=next_trigger,
             )
             db.add(schedule)
             db.commit()
@@ -1064,6 +1094,25 @@ def get_upcoming_status(db: Session = Depends(get_db)):
     return service.get_or_create_status()
 
 
+@app.post("/api/upcoming/cancel", response_model=UpcomingReleasesStatusResponse)
+def cancel_upcoming_check(db: Session = Depends(get_db)):
+    """Cancel an ongoing upcoming releases check (or missing-albums fetch).
+
+    Both jobs share the same status record, so a single cancel endpoint covers
+    whichever one is currently running.
+    """
+    service = UpcomingReleasesService(db)
+    status = service.get_or_create_status()
+
+    if status.status in ("scanning", "pending"):
+        status.status = "cancelled"
+        status.completed_at = datetime.utcnow()
+        db.commit()
+        db.refresh(status)
+
+    return status
+
+
 @app.get("/api/upcoming/albums", response_model=List[AlbumResponse])
 def get_upcoming_albums(db: Session = Depends(get_db)):
     """Get all upcoming albums (future release dates) that are in the wishlist."""
@@ -1131,14 +1180,23 @@ def run_aoty_scrape_in_background(year: int = None, week: int = None):
             service = AOTYService(db)
             service.scrape_weekly_releases(year, week)
     except Exception as e:
+        import traceback
         print(f"AOTY scrape error: {e}")
+        traceback.print_exc()
+        try:
+            status = db.query(NewReleasesScrapeStatus).first()
+            if status and status.status in ("scraping", "pending"):
+                status.status = "error"
+                status.error_message = str(e)
+                db.commit()
+        except Exception:
+            pass
     finally:
         db.close()
 
 
 @app.post("/api/new-releases/scrape", response_model=NewReleasesScrapeStatusResponse)
 def scrape_new_releases(
-    background_tasks: BackgroundTasks,
     year: Optional[int] = None,
     week: Optional[int] = None,
     db: Session = Depends(get_db)
@@ -1149,19 +1207,42 @@ def scrape_new_releases(
     """
     service = AOTYService(db)
     status = service.get_or_create_scrape_status()
-    
-    # If already scraping, return current status
-    if status.status == "scraping":
-        return status
-    
-    # Mark as pending (the background task will set it to "scraping")
+
+    # Reset stuck pending/scraping jobs (same pattern as vinyl releases)
+    if status.status in ("scraping", "pending"):
+        stuck_threshold = timedelta(minutes=10)
+        if status.last_scrape_at and datetime.utcnow() - status.last_scrape_at > stuck_threshold:
+            print(f"[AOTY] Resetting stuck scrape status (started {status.last_scrape_at})")
+            status.status = "idle"
+            status.error_message = "Previous scrape timed out"
+            db.commit()
+            db.refresh(status)
+        elif status.status == "scraping":
+            return status
+        elif status.status == "pending":
+            # Pending without progress — allow a new attempt after a short grace period
+            if status.last_scrape_at and datetime.utcnow() - status.last_scrape_at > timedelta(minutes=2):
+                print("[AOTY] Resetting stale pending scrape status")
+                status.status = "idle"
+                status.error_message = None
+                db.commit()
+                db.refresh(status)
+            else:
+                return status
+
     status.status = "pending"
+    status.last_scrape_at = datetime.utcnow()
+    status.error_message = None
     db.commit()
     db.refresh(status)
-    
-    # Start background scrape
-    background_tasks.add_task(run_aoty_scrape_in_background, year, week)
-    
+
+    thread = threading.Thread(
+        target=run_aoty_scrape_in_background,
+        args=(year, week),
+        daemon=True,
+    )
+    thread.start()
+
     return status
 
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { View, Stats, ScanStatus, UpcomingStatus, Artist } from './types';
-import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, getUpcomingStatus, getArtists } from './api';
+import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, cancelUpcomingCheck, getUpcomingStatus, getArtists } from './api';
 import Sidebar from './components/Sidebar';
 import AlbumsView from './components/AlbumsView';
 import ArtistsView from './components/ArtistsView';
@@ -169,8 +169,18 @@ function App() {
 
   useEffect(() => {
     refreshStats();
-    checkScanStatus();
-    fetchUpcomingStatus();
+    // If a scan/check is already running on the server (e.g. after a page
+    // reload), resume tracking it so the user can see progress and cancel it.
+    checkScanStatus().then(status => {
+      if (status && (status.status === 'scanning' || status.status === 'pending')) {
+        setIsScanning(true);
+      }
+    });
+    fetchUpcomingStatus().then(status => {
+      if (status && (status.status === 'scanning' || status.status === 'pending')) {
+        setIsCheckingUpcoming(true);
+      }
+    });
   }, [refreshStats, checkScanStatus, fetchUpcomingStatus]);
 
   useEffect(() => {
@@ -192,7 +202,7 @@ function App() {
 
     const interval = setInterval(async () => {
       const status = await fetchUpcomingStatus();
-      if (status && (status.status === 'completed' || status.status === 'error' || status.status === 'idle')) {
+      if (status && (status.status === 'completed' || status.status === 'error' || status.status === 'idle' || status.status === 'cancelled')) {
         setIsCheckingUpcoming(false);
         refreshStats();
         setWishlistKey(prev => prev + 1);
@@ -227,6 +237,16 @@ function App() {
       setIsCheckingUpcoming(true);
     } catch (error) {
       console.error('Error starting upcoming check:', error);
+    }
+  };
+
+  const handleCancelUpcoming = async () => {
+    try {
+      await cancelUpcomingCheck();
+      setIsCheckingUpcoming(false);
+      refreshStats();
+    } catch (error) {
+      console.error('Error cancelling upcoming check:', error);
     }
   };
 
@@ -362,6 +382,7 @@ function App() {
         onScan={handleScan}
         onCheckUpcoming={handleCheckUpcoming}
         onCancelScan={handleCancelScan}
+        onCancelUpcoming={handleCancelUpcoming}
         isOpen={sidebarOpen}
       />
       

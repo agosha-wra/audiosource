@@ -11,6 +11,7 @@ interface SidebarProps {
   onScan: () => void;
   onCheckUpcoming: () => void;
   onCancelScan?: () => void;
+  onCancelUpcoming?: () => void;
   isOpen?: boolean;
 }
 
@@ -25,6 +26,7 @@ export default function Sidebar({
   onScan,
   onCheckUpcoming,
   onCancelScan,
+  onCancelUpcoming,
   isOpen = false
 }: SidebarProps) {
   const progress = scanStatus && scanStatus.total_folders > 0
@@ -187,9 +189,20 @@ export default function Sidebar({
                 }} 
               />
             </div>
-            <span className="scan-text">
-              Checking {upcomingStatus?.artists_checked || 0}/{upcomingStatus?.total_artists || 0} artists...
-            </span>
+            <div className="scan-status-row">
+              <span className="scan-text">
+                {upcomingStatus?.status === 'cancelled'
+                  ? 'Check cancelled'
+                  : `Checking ${upcomingStatus?.artists_checked || 0}/${upcomingStatus?.total_artists || 0} artists...`}
+              </span>
+              {onCancelUpcoming && (upcomingStatus?.status === 'scanning' || upcomingStatus?.status === 'pending') && (
+                <button className="cancel-scan-btn" onClick={onCancelUpcoming} title="Cancel upcoming check">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="sidebar-buttons">

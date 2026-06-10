@@ -323,6 +323,12 @@ body::before {
   gap: 12px;
 }
 
+.header-controls-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -467,7 +473,9 @@ body::before {
 }
 
 .album-cover {
+  position: relative;
   aspect-ratio: 1;
+  width: 100%;
   background: var(--bg-elevated);
   display: flex;
   align-items: center;
@@ -1376,6 +1384,16 @@ body::before {
 @media (max-width: 768px) {
   .mobile-menu-btn {
     display: flex;
+    top: 10px;
+    left: 12px;
+    width: 40px;
+    height: 40px;
+    z-index: 70;
+  }
+
+  .mobile-menu-btn svg {
+    width: 20px;
+    height: 20px;
   }
   
   .sidebar-overlay {
@@ -1398,43 +1416,129 @@ body::before {
     left: 0;
   }
   
+  /* Page header: title beside menu, controls on a full-width row below */
   .header {
-    padding: 16px;
-    padding-left: 60px;
-    flex-wrap: wrap;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    grid-template-rows: auto auto;
+    column-gap: 8px;
+    row-gap: 12px;
+    padding: 10px 16px 14px;
+    align-items: center;
+    flex-wrap: nowrap;
   }
-  
+
+  .header h1,
+  .header .header-title-group {
+    grid-column: 2;
+    grid-row: 1;
+    flex: none;
+    min-width: 0;
+    margin: 0;
+  }
+
   .header h1 {
     font-size: 20px;
+    line-height: 40px;
+  }
+
+  .header .header-subtitle {
+    font-size: 12px;
+  }
+
+  .header-controls,
+  .header-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  /* Albums etc.: search + sort on one row */
+  .header-controls:not(.header-controls--stacked) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+
+  .header-controls:not(.header-controls--stacked) .search-box {
+    min-width: 0;
+  }
+
+  /* Artists: search full width, then action + sort */
+  .header-controls--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .header-controls--stacked .search-box {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .header-controls-toolbar {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .header-controls-toolbar .fetch-missing-btn {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    padding: 10px 12px;
+  }
+
+  .header-controls-toolbar .fetch-missing-btn span {
+    display: inline;
+  }
+
+  .header-controls-toolbar .sort-select {
     flex: 1;
     min-width: 0;
   }
   
-  .header-controls {
-    width: 100%;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  
   .search-box {
-    flex: 1;
-    min-width: 150px;
     padding: 10px 14px;
+    min-width: 0;
   }
   
   .sort-select {
     flex-shrink: 0;
   }
+
+  .header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
   
-  .albums-grid {
-    grid-template-columns: repeat(2, 1fr);
+  .albums-grid,
+  .wishlist-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
   }
   
   .artists-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+  }
+
+  .wishlist-album-wrapper .remove-wishlist-btn,
+  .wishlist-album-wrapper .download-wishlist-btn {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .header-controls-toolbar .search-albums-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .header-controls-toolbar .checkbox-label {
+    flex: 1;
+    min-width: 0;
   }
   
   .content {
@@ -1444,14 +1548,6 @@ body::before {
   .fetch-missing-btn {
     padding: 8px 12px;
     font-size: 12px;
-  }
-  
-  .fetch-missing-btn span {
-    display: none;
-  }
-  
-  .fetch-missing-btn svg {
-    margin: 0;
   }
   
   .checkbox-label {
@@ -1474,23 +1570,31 @@ body::before {
 
 /* Small phones */
 @media (max-width: 400px) {
+  .mobile-menu-btn {
+    top: 8px;
+    left: 10px;
+    width: 36px;
+    height: 36px;
+  }
+
   .header {
-    padding: 12px;
-    padding-left: 56px;
-    gap: 8px;
+    grid-template-columns: 46px 1fr;
+    padding: 8px 12px 12px;
+    row-gap: 10px;
   }
   
   .header h1 {
     font-size: 18px;
+    line-height: 36px;
   }
   
-  .header-controls {
-    gap: 6px;
+  .header-controls,
+  .header-controls--stacked {
+    gap: 8px;
   }
   
   .search-box {
     padding: 8px 12px;
-    min-width: 120px;
   }
   
   .search-box input {
@@ -1500,6 +1604,10 @@ body::before {
   .sort-select {
     padding: 8px 10px;
     font-size: 13px;
+  }
+
+  .header-controls-toolbar .fetch-missing-btn span {
+    display: none;
   }
   
   .albums-grid,
@@ -1762,8 +1870,23 @@ body::before {
   height: 20px;
 }
 
+.wishlist-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
 .wishlist-album-wrapper {
   position: relative;
+  min-width: 0;
+}
+
+.wishlist-album-wrapper .album-card {
+  min-width: 0;
+  width: 100%;
+}
+
+.wishlist-album-wrapper .album-cover img {
+  display: block;
+  max-width: 100%;
 }
 
 .remove-wishlist-btn {
@@ -2104,6 +2227,13 @@ body::before {
   color: var(--text-muted);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.scrape-info .scrape-error {
+  color: #ef4444;
+  cursor: help;
 }
 
 .refresh-btn {

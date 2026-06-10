@@ -355,6 +355,8 @@ class SlskdService:
             if self.client.download_files(best["username"], best["files"]):
                 download.status = "downloading"
                 download.slskd_username = best["username"]
+                download.slskd_remote_folder = best.get("folder") or None
+                download.local_folder_path = None
                 download.total_files = len(best["files"])
                 download.total_bytes = sum(f.get("size", 0) for f in best["files"])
                 download.started_at = datetime.utcnow()
@@ -502,6 +504,162 @@ class SlskdService:
             print(f"slskd:     Penalty for {duplicate_patterns} duplicate-pattern files")
         
         return max(score, 0)
+
+    _AUDIO_EXTENSIONS = (".mp3", ".m4a", ".ogg", ".flac", ".opus", ".wav")
+
+    def _is_audio_file(self, filename: str) -> bool:
+        return any(filename.lower().endswith(ext) for ext in self._AUDIO_EXTENSIONS)
+
+    def _download_roots(self, username: Optional[str] = None) -> List[Path]:
+        """
+        Directories to search for completed downloads.
+
+        slskd may write to /downloads/{username}/... or flat under /downloads/...
+        """
+        download_dir = Path(slskd_config.download_dir)
+        roots: List[Path] = []
+        seen: set[str] = set()
+
+        def add(path: Path) -> None:
+            if not path.is_dir():
+                return
+            key = str(path.resolve())
+            if key not in seen:
+                seen.add(key)
+                roots.append(path)
+
+        if username:
+            add(download_dir / username)
+        add(download_dir)
+        return roots
+
+    def _album_title_path_variants(self, album_title: str) -> List[str]:
+        """Variants for matching paths like '1995 Methodrone' to album 'Methodrone'."""
+        variants: List[str] = []
+        base = album_title.lower().strip()
+        if base:
+            variants.append(base)
+        stripped = re.sub(r"^[\[\(]?\s*\d{4}\s*[\]\)]?\s*[-–:]?\s*", "", base).strip()
+        if stripped and stripped not in variants:
+            variants.append(stripped)
+        return variants
+
+    def _album_in_path(self, path_lower: str, album_title: str) -> bool:
+        return any(v in path_lower for v in self._album_title_path_variants(album_title))
+
+    def _path_match_score(self, path: str, artist_name: str, album_title: str) -> int:
+        """Score how well a path matches the expected artist/album (higher = better)."""
+        path_lower = path.lower()
+        artist_clean = artist_name.lower().strip()
+
+        score = 0
+        if self._album_in_path(path_lower, album_title):
+            score += 100
+        if artist_clean and artist_clean in path_lower:
+            score += 40
+
+        album_words = [w for w in album_title.split() if len(w) > 2]
+        artist_words = [w for w in artist_name.split() if len(w) > 2]
+        album_hits = sum(1 for w in album_words if w.lower() in path_lower)
+        artist_hits = sum(1 for w in artist_words if w.lower() in path_lower)
+
+        score += album_hits * 15
+        score += artist_hits * 5
+
+        # Penalize if only artist matches (common when multiple albums share an artist)
+        if artist_hits and not album_hits and not self._album_in_path(path_lower, album_title):
+            score -= 30
+
+        return score
+
+    def _directory_name(self, directory: Dict[str, Any]) -> str:
+        return directory.get("name") or directory.get("directory") or ""
+
+    def _directory_matches_download(self, directory: Dict[str, Any], download: Download) -> bool:
+        """Return True if a slskd transfer directory belongs to this download."""
+        dir_name = self._directory_name(directory)
+        if not dir_name:
+            return False
+
+        if download.slskd_remote_folder:
+            remote = download.slskd_remote_folder.replace("\\", "/").lower().strip("/")
+            current = dir_name.replace("\\", "/").lower().strip("/")
+            if current == remote or current.endswith("/" + remote) or remote.endswith("/" + current):
+                return True
+
+        return self._path_match_score(dir_name, download.artist_name, download.album_title) >= 50
+
+    def _local_path_for_slskd_directory(
+        self,
+        username: str,
+        directory_name: str,
+        artist_name: Optional[str] = None,
+        album_title: Optional[str] = None,
+    ) -> Optional[Path]:
+        """Map a slskd directory name to the local folder on disk."""
+        for root in self._download_roots(username):
+            found = self._local_path_for_slskd_directory_in_root(
+                root, directory_name, artist_name, album_title
+            )
+            if found:
+                return found
+        return None
+
+    def _local_path_for_slskd_directory_in_root(
+        self,
+        root: Path,
+        directory_name: str,
+        artist_name: Optional[str] = None,
+        album_title: Optional[str] = None,
+    ) -> Optional[Path]:
+        parts = [p for p in re.split(r"[/\\]+", directory_name.strip()) if p]
+        if not parts:
+            return None
+
+        # Try progressively shorter suffixes of the remote path
+        for i in range(len(parts)):
+            candidate = root.joinpath(*parts[i:])
+            if candidate.is_dir() and self._count_audio_in_folder(candidate) > 0:
+                return candidate
+
+        # Match by leaf folder name (album folder)
+        leaf = parts[-1].lower()
+        matches: List[Path] = []
+        for dir_root, _dirs, files in os.walk(root):
+            if not any(self._is_audio_file(f) for f in files):
+                continue
+            folder = Path(dir_root)
+            folder_name = folder.name.lower()
+            if folder_name == leaf or leaf in folder_name:
+                matches.append(folder)
+
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+        if artist_name and album_title:
+            return max(
+                matches,
+                key=lambda p: self._path_match_score(str(p), artist_name, album_title),
+            )
+        return max(matches, key=lambda p: p.stat().st_mtime)
+
+    def _resolve_folder_from_remote(self, download: Download) -> Optional[Path]:
+        """Resolve local folder using the remote path stored at download start."""
+        if not download.slskd_remote_folder or not download.slskd_username:
+            return None
+        return self._local_path_for_slskd_directory(
+            download.slskd_username,
+            download.slskd_remote_folder,
+            download.artist_name,
+            download.album_title,
+        )
+
+    def _count_audio_in_folder(self, folder: Path) -> int:
+        count = 0
+        for root, _dirs, files in os.walk(folder):
+            count += sum(1 for f in files if self._is_audio_file(f))
+        return count
     
     def update_download_progress(self, download_id: int) -> Optional[Download]:
         """Update download progress from slskd."""
@@ -524,6 +682,14 @@ class SlskdService:
                 if user_download:
                     # Calculate progress - slskd returns directories with files
                     directories = user_download.get("directories", [])
+
+                    # Only track directories that belong to THIS download (same peer
+                    # may be used for multiple albums in the queue).
+                    matching_directories = [
+                        d for d in directories if self._directory_matches_download(d, download)
+                    ]
+                    if not matching_directories and len(directories) == 1:
+                        matching_directories = directories
                     
                     total_files = 0
                     completed_files = 0
@@ -531,7 +697,18 @@ class SlskdService:
                     total_bytes = 0
                     completed_bytes = 0
                     
-                    for directory in directories:
+                    for directory in matching_directories:
+                        dir_name = self._directory_name(directory)
+                        if dir_name and download.slskd_username:
+                            local_path = self._local_path_for_slskd_directory(
+                                download.slskd_username,
+                                dir_name,
+                                download.artist_name,
+                                download.album_title,
+                            )
+                            if local_path:
+                                download.local_folder_path = str(local_path)
+
                         files = directory.get("files", [])
                         for file_dl in files:
                             total_files += 1
@@ -623,6 +800,8 @@ class SlskdService:
         download.completed_files = 0
         download.completed_bytes = 0
         download.slskd_username = None
+        download.slskd_remote_folder = None
+        download.local_folder_path = None
         self.db.commit()
         
         # Run the search again
@@ -669,22 +848,18 @@ class SlskdService:
             return 0
         
         try:
-            download_dir = Path(slskd_config.download_dir)
-            user_dir = download_dir / download.slskd_username
-            
-            if not user_dir.exists():
-                return 0
-            
-            # Find and delete audio files matching this album
             deleted_count = 0
             artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
-            album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
             
             dirs_to_check = []
-            for root, dirs, files in os.walk(user_dir):
-                path_lower = root.lower()
-                # Check if this directory matches the artist/album
-                if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
+            for search_root in self._download_roots(download.slskd_username):
+                for root, dirs, files in os.walk(search_root):
+                    path_lower = root.lower()
+                    if not (
+                        any(w in path_lower for w in artist_words)
+                        or self._album_in_path(path_lower, download.album_title)
+                    ):
+                        continue
                     for file in files:
                         if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
                             file_path = Path(root) / file
@@ -772,19 +947,11 @@ class SlskdService:
             download_folder = self._find_download_folder(download)
             if not download_folder:
                 print(f"slskd: Could not find download folder for {download.artist_name} - {download.album_title}")
-                # Still allow moving without beets if folder not found in expected location
-                # Try to find and move files anyway
-                download_dir = Path(slskd_config.download_dir)
-                if download.slskd_username:
-                    fallback_folder = download_dir / download.slskd_username
-                    if fallback_folder.exists():
-                        download_folder = fallback_folder
-                        print(f"slskd: Using fallback folder: {fallback_folder}")
-                    else:
-                        print(f"slskd: Fallback folder not found either: {fallback_folder}")
-                        return False
-                else:
-                    return False
+                download.status = "pending_review"
+                download.error_message = "Could not locate downloaded files on disk"
+                download.beets_candidates = json.dumps([])
+                self.db.commit()
+                return False
             
             music_dir = Path(get_settings().music_folder)
             
@@ -842,34 +1009,112 @@ class SlskdService:
     
     def _find_download_folder(self, download: Download) -> Optional[Path]:
         """Find the folder containing downloaded files for this download."""
-        download_dir = Path(slskd_config.download_dir)
-        
-        if not download_dir.exists():
+        # 1. Use path captured during download progress (most reliable)
+        if download.local_folder_path:
+            stored = Path(download.local_folder_path)
+            if stored.exists() and self._count_audio_in_folder(stored) > 0:
+                print(f"slskd: Using stored local_folder_path: {stored}")
+                return stored
+
+        # 2. Resolve from remote folder recorded at download start
+        resolved = self._resolve_folder_from_remote(download)
+        if resolved and resolved.exists():
+            print(f"slskd: Resolved folder from slskd_remote_folder: {resolved}")
+            download.local_folder_path = str(resolved)
+            self.db.commit()
+            return resolved
+
+        search_roots = self._download_roots(download.slskd_username)
+        if not search_roots:
+            return self._find_folder_in_music_library(download)
+
+        # 3. Score all candidate folders and pick the best match (not first match)
+        best_folder: Optional[Path] = None
+        best_score = -1
+
+        for search_root in search_roots:
+            for root, _dirs, files in os.walk(search_root):
+                if not any(self._is_audio_file(f) for f in files):
+                    continue
+
+                folder = Path(root)
+                score = self._path_match_score(str(folder), download.artist_name, download.album_title)
+
+                if score < 50:
+                    continue
+
+                audio_count = sum(1 for f in files if self._is_audio_file(f))
+                if download.total_files > 0:
+                    score += max(0, 30 - abs(audio_count - download.total_files) * 3)
+
+                try:
+                    score += int(folder.stat().st_mtime / 1000) % 1000  # prefer newer as tiebreaker
+                except OSError:
+                    pass
+
+                if score > best_score:
+                    best_score = score
+                    best_folder = folder
+
+        if best_folder:
+            print(f"slskd: Best folder match (score={best_score}): {best_folder}")
+            download.local_folder_path = str(best_folder)
+            self.db.commit()
+            return best_folder
+
+        library_folder = self._find_folder_in_music_library(download)
+        if library_folder:
+            print(f"slskd: Found folder in music library: {library_folder}")
+            download.local_folder_path = str(library_folder)
+            self.db.commit()
+            return library_folder
+
+        print(f"slskd: No matching folder found for {download.artist_name} - {download.album_title}")
+        return None
+
+    def _find_folder_in_music_library(self, download: Download) -> Optional[Path]:
+        """Fallback: files may already sit under the artist folder in the music library."""
+        music_dir = Path(get_settings().music_folder)
+        if not music_dir.is_dir():
             return None
-        
-        username = download.slskd_username
-        if not username:
-            return None
-        
-        # slskd organizes downloads by username
-        user_dir = download_dir / username
-        if not user_dir.exists():
-            user_dir = download_dir
-        
-        # Find folder that contains our album files
-        artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
-        album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
-        
-        for root, dirs, files in os.walk(user_dir):
-            # Check if this folder has audio files matching our album
-            audio_files = [f for f in files if any(f.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"])]
-            if audio_files:
-                path_lower = root.lower()
-                if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
-                    return Path(root)
-        
-        # Return user_dir as fallback
-        return user_dir if user_dir.exists() else None
+
+        artist_names = {
+            download.artist_name.replace("/", "_").replace("\\", "_"),
+            download.artist_name,
+        }
+        for entry in music_dir.iterdir():
+            if entry.is_dir() and entry.name.lower() == download.artist_name.lower():
+                artist_names.add(entry.name)
+
+        since = download.started_at or download.created_at
+        best_folder: Optional[Path] = None
+        best_score = -1
+
+        for artist_name in artist_names:
+            artist_dir = music_dir / artist_name
+            if not artist_dir.is_dir():
+                continue
+            for album_dir in artist_dir.iterdir():
+                if not album_dir.is_dir():
+                    continue
+                if self._count_audio_in_folder(album_dir) == 0:
+                    continue
+                score = self._path_match_score(
+                    str(album_dir), download.artist_name, download.album_title
+                )
+                if score < 50:
+                    continue
+                if since:
+                    try:
+                        if album_dir.stat().st_mtime < since.timestamp() - 120:
+                            continue
+                    except OSError:
+                        pass
+                if score > best_score:
+                    best_score = score
+                    best_folder = album_dir
+
+        return best_folder
     
     def _move_files_to_library(self, download: Download, source_folder: Path) -> bool:
         """Move audio files from source folder to music library."""
@@ -885,16 +1130,34 @@ class SlskdService:
         artist_words = [w.lower() for w in download.artist_name.split() if len(w) > 2]
         album_words = [w.lower() for w in download.album_title.split() if len(w) > 2]
         
+        copy_only_fallback = False
         for root, dirs, files in os.walk(source_folder):
             for file in files:
                 if any(file.lower().endswith(ext) for ext in [".mp3", ".m4a", ".ogg", ".flac"]):
                     file_path = Path(root) / file
                     path_lower = str(file_path).lower()
-                    
+
                     if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
                         dest_path = target_dir / file
-                        shutil.move(str(file_path), str(dest_path))
+                        try:
+                            shutil.move(str(file_path), str(dest_path))
+                        except PermissionError:
+                            # Source lives in a directory we can't write to
+                            # (e.g. slskd wrote it as root). Fall back to a
+                            # copy so the album still lands in the library;
+                            # the leftover source files will need to be
+                            # cleaned up out-of-band (see warning below).
+                            shutil.copy2(str(file_path), str(dest_path))
+                            copy_only_fallback = True
                         moved_count += 1
+
+        if copy_only_fallback:
+            print(
+                f"slskd: WARNING - could not delete source files in {source_folder} "
+                f"(permission denied). Files were COPIED into the library instead. "
+                f"You'll need to remove the leftovers manually or fix slskd's "
+                f"download-dir ownership/umask so it writes group-writable files."
+            )
         
         if moved_count > 0:
             download.status = "moved"

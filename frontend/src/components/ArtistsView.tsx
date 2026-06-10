@@ -175,7 +175,7 @@ export default function ArtistsView({
     <>
       <header className="header">
         <h1>Artists</h1>
-        <div className="header-controls">
+        <div className="header-controls header-controls--stacked">
           <div className="search-box">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8"/>
@@ -188,6 +188,7 @@ export default function ArtistsView({
               onChange={(e) => onSearchChange(e.target.value)}
             />
           </div>
+          <div className="header-controls-toolbar">
           <button 
             className="fetch-missing-btn"
             onClick={handleFetchMissing}
@@ -206,7 +207,7 @@ export default function ArtistsView({
                   <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                   <path d="M12 8v4l2 2"/>
                 </svg>
-                <span>Fetch Missing Albums</span>
+                <span>Fetch Missing</span>
               </>
             )}
           </button>
@@ -219,6 +220,7 @@ export default function ArtistsView({
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
+          </div>
         </div>
       </header>
       

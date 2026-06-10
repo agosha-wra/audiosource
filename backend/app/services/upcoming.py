@@ -70,6 +70,15 @@ class UpcomingReleasesService:
             total_found = 0
             
             for i, artist in enumerate(artists):
+                # Check if scan was cancelled
+                self.db.refresh(status)
+                if status.status == "cancelled":
+                    print("Upcoming releases check cancelled by user")
+                    status.completed_at = datetime.utcnow()
+                    status.releases_found = total_found
+                    self.db.commit()
+                    return status
+
                 status.artists_checked = i + 1
                 self.db.commit()
                 
@@ -192,6 +201,14 @@ class UpcomingReleasesService:
             logger.info("[FETCH] Cleaning up duplicate missing albums...")
             duplicates_removed = 0
             for artist in artists:
+                # Check if scan was cancelled
+                self.db.refresh(status)
+                if status.status == "cancelled":
+                    logger.info("[FETCH] Cancelled by user during cleanup phase")
+                    status.completed_at = datetime.utcnow()
+                    self.db.commit()
+                    return status
+
                 # Get owned albums for this artist
                 owned_albums = self.db.query(Album).filter(
                     Album.artist_id == artist.id,
@@ -226,6 +243,15 @@ class UpcomingReleasesService:
             total_added = 0
             
             for i, artist in enumerate(artists):
+                # Check if scan was cancelled
+                self.db.refresh(status)
+                if status.status == "cancelled":
+                    logger.info(f"[FETCH] Cancelled by user at {i}/{len(artists)}")
+                    status.completed_at = datetime.utcnow()
+                    status.releases_found = total_added
+                    self.db.commit()
+                    return status
+
                 status.artists_checked = i + 1
                 self.db.commit()
                 

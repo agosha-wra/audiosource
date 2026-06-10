@@ -107,6 +107,10 @@ export async function getUpcomingStatus(): Promise<UpcomingStatus> {
   return fetchApi<UpcomingStatus>('/upcoming/status');
 }
 
+export async function cancelUpcomingCheck(): Promise<UpcomingStatus> {
+  return fetchApi<UpcomingStatus>('/upcoming/cancel', { method: 'POST' });
+}
+
 export async function getUpcomingAlbums(): Promise<Album[]> {
   return fetchApi<Album[]>('/upcoming/albums');
 }

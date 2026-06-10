@@ -1,7 +1,10 @@
 # Multi-stage build for AudioSource
 
 # Stage 1: Build the React frontend
-FROM node:20-alpine AS frontend
+# Run on the host's native architecture to avoid QEMU emulation crashes
+# (esbuild segfaults under QEMU when cross-building amd64 from arm64).
+# The output is static JS/HTML/CSS and is architecture-independent.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
@@ -25,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies (curl_cffi handles AOTY scraping behind Cloudflare)
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -38,9 +41,12 @@ COPY backend/ ./backend/
 # Copy frontend built assets
 COPY --from=frontend /app/frontend/dist /app/frontend
 
-# Install nginx for serving frontend
+# Install nginx for serving frontend. We drop privileges in the entrypoint
+# using `runuser` (from util-linux), which is already part of the slim image.
 RUN apt-get update && apt-get install -y --no-install-recommends nginx \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 audiosource \
+    && useradd -u 1000 -g 1000 -m -s /bin/bash audiosource
 
 # Configure nginx
 COPY nginx.conf /etc/nginx/nginx.conf

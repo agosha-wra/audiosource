@@ -90,7 +90,11 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
 
   useEffect(() => {
     fetchReleases(selectedYear, selectedWeek);
-    fetchScrapeStatus();
+    fetchScrapeStatus().then((status) => {
+      if (status && (status.status === 'scraping' || status.status === 'pending')) {
+        setIsScraping(true);
+      }
+    });
   }, [selectedYear, selectedWeek, fetchReleases, fetchScrapeStatus]);
 
   useEffect(() => {
@@ -109,10 +113,16 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
 
   const handleScrape = async () => {
     try {
-      await scrapeNewReleases(selectedYear, selectedWeek);
-      setIsScraping(true);
+      const status = await scrapeNewReleases(selectedYear, selectedWeek);
+      setScrapeStatus(status);
+      if (status.status === 'scraping' || status.status === 'pending') {
+        setIsScraping(true);
+      } else {
+        fetchReleases(selectedYear, selectedWeek);
+      }
     } catch (error) {
       console.error('Error starting scrape:', error);
+      setIsScraping(false);
     }
   };
 
@@ -220,6 +230,9 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
         <div className="header-actions">
           <span className="scrape-info">
             Last updated: {formatLastScrape(scrapeStatus?.last_scrape_at ?? null)}
+            {scrapeStatus?.status === 'error' && scrapeStatus.error_message && (
+              <> · <span className="scrape-error" title={scrapeStatus.error_message}>Failed</span></>
+            )}
           </span>
           <button 
             className="refresh-btn"

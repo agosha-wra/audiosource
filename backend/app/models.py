@@ -145,6 +145,8 @@ class Download(Base):
     
     # slskd info
     slskd_username = Column(String(255), nullable=True)  # User we're downloading from
+    slskd_remote_folder = Column(Text, nullable=True)  # Remote path chosen at download start
+    local_folder_path = Column(Text, nullable=True)  # Resolved path on disk for this download
     total_files = Column(Integer, default=0)
     completed_files = Column(Integer, default=0)
     total_bytes = Column(Integer, default=0)

@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import List, Optional, Tuple, Set
 from datetime import datetime
@@ -12,6 +13,8 @@ from app.services.musicbrainz import MusicBrainzService
 from app.config import get_settings
 
 settings = get_settings()
+
+_discography_lock = threading.Lock()
 
 # Supported audio file extensions
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".ogg", ".wav", ".wma", ".aiff"}
@@ -581,6 +584,44 @@ class ScannerService:
         print(f"Added {missing_count} missing albums for {artist.name}")
         return missing_count
 
+    def fetch_all_discographies(self, force_rescan: bool = False) -> None:
+        """Fetch MusicBrainz discographies for all artists (slow; run in background)."""
+        if force_rescan:
+            self.db.query(Artist).filter(
+                Artist.musicbrainz_id.isnot(None)
+            ).update({Artist.discography_fetched: False}, synchronize_session=False)
+            self.db.commit()
+
+        artists = self.db.query(Artist).filter(
+            Artist.musicbrainz_id.isnot(None)
+        ).all()
+
+        print(f"[SCAN] Background discography fetch for {len(artists)} artists...")
+        for artist in artists:
+            try:
+                self.fetch_artist_discography(artist)
+            except Exception as e:
+                print(f"Error fetching discography for {artist.name}: {e}")
+                continue
+        print("[SCAN] Background discography fetch finished")
+
+    def _start_discography_fetch_background(self, force_rescan: bool) -> None:
+        """Run discography fetch in a daemon thread so the library scan can complete."""
+        from app.database import SessionLocal
+
+        def _run():
+            db = SessionLocal()
+            try:
+                with _discography_lock:
+                    ScannerService(db).fetch_all_discographies(force_rescan)
+            except Exception as e:
+                print(f"[SCAN] Background discography fetch failed: {e}")
+            finally:
+                db.close()
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
     def scan_library(self, force_rescan: bool = False) -> ScanStatus:
         """Scan the entire music library."""
         status = self.get_or_create_scan_status()
@@ -646,31 +687,14 @@ class ScannerService:
                 self.db.commit()
                 print(f"Marked {deleted_count} albums as no longer owned (folders deleted)")
 
-            # After scanning owned albums, fetch discographies for all artists
-            print("Fetching artist discographies...")
-            artists = self.db.query(Artist).filter(
-                Artist.musicbrainz_id.isnot(None)
-            ).all()
-            
-            for artist in artists:
-                # Check if scan was cancelled
-                self.db.refresh(status)
-                if status.status == "cancelled":
-                    print("Scan cancelled by user")
-                    return status
-                
-                try:
-                    # Reset discography_fetched if force_rescan
-                    if force_rescan:
-                        artist.discography_fetched = False
-                        self.db.commit()
-                    self.fetch_artist_discography(artist)
-                except Exception as e:
-                    print(f"Error fetching discography for {artist.name}: {e}")
-                    continue
-
+            # Folder scan is done — mark complete so the UI does not sit at N/N forever.
+            # Discography fetching hits MusicBrainz once per artist and can take a long time.
             status.status = "completed"
             status.completed_at = datetime.utcnow()
+            status.current_folder = None
+            self.db.commit()
+
+            self._start_discography_fetch_background(force_rescan)
 
         except Exception as e:
             status.status = "error"

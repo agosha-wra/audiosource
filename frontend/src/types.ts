@@ -61,7 +61,7 @@ export interface Stats {
 
 export interface UpcomingStatus {
   id: number;
-  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error';
+  status: 'idle' | 'pending' | 'scanning' | 'completed' | 'error' | 'cancelled';
   artists_checked: number;
   total_artists: number;
   releases_found: number;
@@ -117,7 +117,7 @@ export interface NewRelease {
 
 export interface NewReleasesScrapeStatus {
   id: number;
-  status: 'idle' | 'scraping' | 'completed' | 'error';
+  status: 'idle' | 'pending' | 'scraping' | 'completed' | 'error';
   last_scrape_at: string | null;
   next_scrape_at: string | null;
   albums_found: number;

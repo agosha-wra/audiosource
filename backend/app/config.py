@@ -15,8 +15,15 @@ class Settings(BaseSettings):
     slskd_api_key: str = ""
     slskd_download_dir: str = "/downloads"
     
+    # Reddit API (optional — for vinyl releases scrape when public JSON is blocked)
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+
     # Concert city filter (only show concerts in this city/country)
     concert_city: str = "Paris"
+
+    # Hour (0-23, UTC) at which nightly library and upcoming scans trigger.
+    nightly_scan_hour_utc: int = 3
 
     class Config:
         env_file = ".env"

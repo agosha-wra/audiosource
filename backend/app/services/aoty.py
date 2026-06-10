@@ -22,16 +22,117 @@ class AOTYService:
     
     def __init__(self, db: Session):
         self.db = db
-    
+
+    _BROWSER_HEADERS = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Referer": "https://www.albumoftheyear.org/",
+    }
+
     def _create_scraper(self):
         """Create a cloudscraper instance."""
-        return cloudscraper.create_scraper(
+        scraper = cloudscraper.create_scraper(
             browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'desktop': True
+                "browser": "chrome",
+                "platform": "linux",
+                "desktop": True,
             }
         )
+        scraper.headers.update(self._BROWSER_HEADERS)
+        return scraper
+
+    def _fetch_html(self, url: str) -> str:
+        """
+        Fetch AOTY HTML, trying several strategies (Cloudflare often blocks Docker IPs).
+        Order: curl_cffi TLS impersonation -> cloudscraper -> headless Chromium.
+        """
+        errors: List[str] = []
+
+        # 1. curl_cffi — mimics a real Chrome TLS fingerprint (works well in containers)
+        try:
+            from curl_cffi import requests as cffi_requests
+
+            logger.info(f"[AOTY] Fetching via curl_cffi: {url}")
+            with cffi_requests.Session(impersonate="chrome120") as session:
+                session.get(f"{self.BASE_URL}/", timeout=30)
+                time.sleep(0.5)
+                response = session.get(url, timeout=60)
+            if response.status_code == 200 and self._looks_like_aoty_page(response.text):
+                return response.text
+            errors.append(f"curl_cffi: HTTP {response.status_code}")
+        except ImportError:
+            logger.debug("[AOTY] curl_cffi not installed, skipping")
+        except Exception as e:
+            errors.append(f"curl_cffi: {e}")
+
+        # 2. cloudscraper — warm up session with homepage visit first
+        try:
+            logger.info(f"[AOTY] Fetching via cloudscraper: {url}")
+            scraper = self._create_scraper()
+            scraper.get(f"{self.BASE_URL}/", timeout=30)
+            time.sleep(1)
+            response = scraper.get(url, timeout=60)
+            if response.status_code == 200 and self._looks_like_aoty_page(response.text):
+                return response.text
+            errors.append(f"cloudscraper: HTTP {response.status_code}")
+        except Exception as e:
+            errors.append(f"cloudscraper: {e}")
+
+        # 3. Playwright headless browser — slowest but most reliable
+        try:
+            logger.info(f"[AOTY] Fetching via Playwright: {url}")
+            html = self._fetch_with_playwright(url)
+            if self._looks_like_aoty_page(html):
+                return html
+            errors.append("playwright: page did not contain expected content")
+        except Exception as e:
+            errors.append(f"playwright: {e}")
+
+        raise RuntimeError(
+            "AOTY blocked all fetch methods (403/Cloudflare). "
+            + "; ".join(errors)
+        )
+
+    @staticmethod
+    def _looks_like_aoty_page(html: str) -> bool:
+        """Heuristic check that we got a real AOTY page, not a challenge or error."""
+        if not html or len(html) < 500:
+            return False
+        lower = html.lower()
+        if "just a moment" in lower and "cloudflare" in lower:
+            return False
+        return "albumoftheyear" in lower and (
+            "albumblock" in lower or "albumtitle" in lower or "releases" in lower
+        )
+
+    def _fetch_with_playwright(self, url: str) -> str:
+        """Load page in headless Chromium and return rendered HTML."""
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            try:
+                page = browser.new_page(
+                    user_agent=(
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    extra_http_headers=self._BROWSER_HEADERS,
+                )
+                page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+                try:
+                    page.wait_for_selector(".albumBlock", timeout=30_000)
+                except Exception:
+                    # Weekly pages may still be valid without blocks if empty week
+                    pass
+                return page.content()
+            finally:
+                browser.close()
     
     def get_or_create_scrape_status(self) -> NewReleasesScrapeStatus:
         """Get or create the scrape status record."""
@@ -62,6 +163,10 @@ class AOTYService:
         
         if status.status == "scraping":
             return {"status": "already_scraping", "message": "Scrape already in progress"}
+
+        if status.status == "pending":
+            # API marked this job pending; continue into scraping state.
+            pass
         
         if year is None or week is None:
             year, week = self.get_current_week()
@@ -75,11 +180,8 @@ class AOTYService:
             url = f"{self.BASE_URL}/week/{year}/{week}/releases/?sort=popular"
             logger.info(f"[AOTY] Scraping {url}")
             
-            scraper = self._create_scraper()
-            response = scraper.get(url, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, "lxml")
+            html = self._fetch_html(url)
+            soup = BeautifulSoup(html, "lxml")
             albums_found = 0
             album_blocks = soup.select(".albumBlock")
             
@@ -112,6 +214,35 @@ class AOTYService:
             status.error_message = str(e)
             self.db.commit()
             return {"status": "error", "message": str(e)}
+
+    def _extract_critic_rating(self, block) -> tuple[Optional[int], int]:
+        """Critic score and review count only; user scores/reviews are ignored."""
+        for row in block.select(".ratingRow"):
+            labels = row.select(".ratingText")
+            if not labels:
+                continue
+            label_text = " ".join(label.get_text(strip=True) for label in labels).lower()
+            if "critic" not in label_text:
+                continue
+
+            critic_score = None
+            score_elem = row.select_one(".rating")
+            if score_elem:
+                try:
+                    critic_score = int(score_elem.get_text(strip=True))
+                except ValueError:
+                    pass
+
+            num_critics = 0
+            for label in labels:
+                match = re.search(r"\(([\d,]+)\)", label.get_text(strip=True))
+                if match:
+                    num_critics = int(match.group(1).replace(",", ""))
+                    break
+
+            return critic_score, num_critics
+
+        return None, 0
     
     def _parse_album_block(self, block, year: int, week: int) -> Optional[Dict[str, Any]]:
         """Parse a single album block from AOTY."""
@@ -158,20 +289,7 @@ class AOTYService:
                 else:
                     release_date = type_text
             
-            critic_score = None
-            score_elem = block.select_one(".ratingRow .rating, .rating")
-            if score_elem:
-                try:
-                    critic_score = int(score_elem.get_text(strip=True))
-                except ValueError:
-                    pass
-            
-            num_critics = None
-            for rt in block.select(".ratingText"):
-                match = re.search(r"\((\d+)\)", rt.get_text(strip=True))
-                if match:
-                    num_critics = int(match.group(1))
-                    break
+            critic_score, num_critics = self._extract_critic_rating(block)
             
             return {
                 "artist_name": artist_name, "album_title": album_title,
@@ -245,11 +363,8 @@ class AOTYService:
             
             logger.info(f"[AOTY] Searching for artist: {artist_name} (up to {max_candidates} candidates)")
             
-            scraper = self._create_scraper()
-            response = scraper.get(search_url, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, "lxml")
+            html = self._fetch_html(search_url)
+            soup = BeautifulSoup(html, "lxml")
             artist_links = soup.select("a[href*='/artist/']")
             
             if not artist_links:
@@ -301,11 +416,8 @@ class AOTYService:
             full_url = f"{self.BASE_URL}{artist_url}" if artist_url.startswith("/") else artist_url
             logger.info(f"[AOTY] Scraping artist discography: {full_url}")
             
-            scraper = self._create_scraper()
-            response = scraper.get(full_url, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, "lxml")
+            html = self._fetch_html(full_url)
+            soup = BeautifulSoup(html, "lxml")
             albums = []
             
             for block in soup.select(".albumBlock"):
@@ -347,13 +459,7 @@ class AOTYService:
             
             aoty_url = f"{self.BASE_URL}{album_link}" if album_link.startswith("/") else album_link
             
-            critic_score = None
-            score_elem = block.select_one(".ratingRow .rating, .rating")
-            if score_elem:
-                try:
-                    critic_score = int(score_elem.get_text(strip=True))
-                except ValueError:
-                    pass
+            critic_score, _ = self._extract_critic_rating(block)
             
             return {"title": album_title, "aoty_url": aoty_url, "critic_score": critic_score}
             
