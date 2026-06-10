@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Set
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Artist, VinylRelease, VinylReleasesScrapeStatus
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,20 @@ logger = logging.getLogger(__name__)
 class RedditService:
     """Service for scraping r/vinylreleases."""
     
-    SUBREDDIT_URL = "https://www.reddit.com/r/VinylReleases/new.json"
+    SUBREDDIT = "VinylReleases"
+    SUBREDDIT_URL = f"https://www.reddit.com/r/{SUBREDDIT}/new.json"
+    # Arctic Shift mirrors Reddit posts in near real-time — no API key, works from Docker IPs.
+    ARCTIC_SHIFT_URL = "https://arctic-shift.photon-reddit.com/api/posts/search"
+    PULLPUSH_URL = "https://api.pullpush.io/reddit/search/submission"
     HEADERS = {
-        "User-Agent": "AudioSource/1.0 (Music Library Manager)"
+        "User-Agent": "AudioSource/1.0 (Music Library Manager; contact: audiosource)"
+    }
+    BROWSER_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
     }
     
     def __init__(self, db: Session):
@@ -152,10 +164,16 @@ class RedditService:
                 self.db.commit()
                 return {"status": "completed", "posts_found": 0, "matches_found": 0}
             
-            # Fetch posts from Reddit
-            print(f"[VINYL] Fetching posts from Reddit...")
-            posts = self._fetch_reddit_posts(limit)
-            print(f"[VINYL] Fetched {len(posts)} posts from r/vinylreleases")
+            # Fetch posts from Reddit (official API, then pullpush fallback)
+            print(f"[VINYL] Fetching posts from r/{self.SUBREDDIT}...")
+            posts, fetch_error = self._fetch_reddit_posts(limit)
+            print(f"[VINYL] Fetched {len(posts)} posts from r/{self.SUBREDDIT}")
+            if not posts:
+                msg = fetch_error or "Could not fetch posts from Reddit (no data returned)"
+                status.status = "error"
+                status.error_message = msg
+                self.db.commit()
+                return {"status": "error", "message": msg}
             
             posts_found = len(posts)
             matches_found = 0
@@ -242,63 +260,233 @@ class RedditService:
             self.db.commit()
             return {"status": "error", "message": str(e)}
     
-    def _fetch_reddit_posts(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Fetch posts from r/vinylreleases."""
-        posts = []
+    def _fetch_reddit_posts(self, limit: int = 100) -> tuple[List[Dict[str, Any]], str | None]:
+        """Fetch posts from r/VinylReleases. Returns (posts, error_message)."""
+        posts, arctic_error = self._fetch_reddit_posts_arctic_shift(limit)
+        if posts:
+            print(f"[VINYL] Fetched {len(posts)} posts via Arctic Shift")
+            return posts, None
+
+        print(f"[VINYL] Arctic Shift unavailable ({arctic_error}), trying Reddit directly...")
+
+        settings = get_settings()
+        if settings.reddit_client_id and settings.reddit_client_secret:
+            posts, oauth_error = self._fetch_reddit_posts_oauth(limit, settings)
+            if posts:
+                return posts, None
+            print(f"[VINYL] Reddit OAuth failed ({oauth_error}), trying public JSON...")
+
+        posts, reddit_error = self._fetch_reddit_posts_official(limit)
+        if posts:
+            return posts, None
+
+        print(f"[VINYL] Reddit direct access failed ({reddit_error}), trying pullpush.io archive...")
+        posts, pullpush_error = self._fetch_reddit_posts_pullpush(limit)
+        if posts:
+            print("[VINYL] WARNING: pullpush archive may be months behind live Reddit")
+            return posts, None
+
+        errors = [e for e in (arctic_error, reddit_error, pullpush_error) if e]
+        return [], "; ".join(errors) if errors else "All fetch sources failed"
+
+    def _fetch_reddit_posts_arctic_shift(self, limit: int) -> tuple[List[Dict[str, Any]], str | None]:
+        """Fetch r/VinylReleases posts via Arctic Shift (Reddit mirror, no API key)."""
+        posts: List[Dict[str, Any]] = []
+        before: int | None = None
+        last_error: str | None = None
+
+        while len(posts) < limit:
+            try:
+                batch_size = min(100, limit - len(posts))
+                params: Dict[str, Any] = {
+                    "subreddit": self.SUBREDDIT,
+                    "limit": batch_size,
+                    "sort": "desc",
+                }
+                if before is not None:
+                    params["before"] = before
+
+                response = httpx.get(
+                    self.ARCTIC_SHIFT_URL,
+                    headers=self.HEADERS,
+                    params=params,
+                    timeout=45,
+                )
+
+                if response.status_code != 200:
+                    last_error = f"HTTP {response.status_code}"
+                    break
+
+                batch = response.json().get("data", [])
+                if not batch:
+                    break
+
+                posts.extend(batch)
+                before = batch[-1].get("created_utc")
+                if before is None:
+                    break
+
+            except httpx.TimeoutException:
+                last_error = "request timed out"
+                break
+            except Exception as e:
+                last_error = str(e)
+                logger.exception("[VINYL] Error fetching from Arctic Shift")
+                break
+
+        return posts[:limit], last_error
+
+    def _fetch_reddit_posts_official(self, limit: int) -> tuple[List[Dict[str, Any]], str | None]:
+        posts: List[Dict[str, Any]] = []
         after = None
-        
-        print(f"[VINYL] Starting to fetch up to {limit} posts from Reddit...")
-        
+        last_error: str | None = None
+
         while len(posts) < limit:
             try:
                 params = {"limit": min(100, limit - len(posts))}
                 if after:
                     params["after"] = after
-                
-                print(f"[VINYL] Making request to {self.SUBREDDIT_URL} with params {params}")
-                
+
                 response = httpx.get(
                     self.SUBREDDIT_URL,
-                    headers=self.HEADERS,
+                    headers=self.BROWSER_HEADERS,
                     params=params,
-                    timeout=30
+                    timeout=30,
+                    follow_redirects=True,
                 )
-                
-                print(f"[VINYL] Reddit response status: {response.status_code}")
-                
+
                 if response.status_code != 200:
-                    print(f"[VINYL] Reddit returned non-200: {response.text[:500]}")
+                    last_error = f"HTTP {response.status_code}"
+                    logger.warning("[VINYL] Reddit returned %s", response.status_code)
                     break
-                
-                response.raise_for_status()
-                
+
                 data = response.json()
                 children = data.get("data", {}).get("children", [])
-                
-                print(f"[VINYL] Got {len(children)} posts in this batch")
-                
                 if not children:
                     break
-                
+
                 for child in children:
-                    post_data = child.get("data", {})
-                    posts.append(post_data)
-                
+                    posts.append(child.get("data", {}))
+
                 after = data.get("data", {}).get("after")
                 if not after:
                     break
-                    
+
             except httpx.TimeoutException:
-                print(f"[VINYL] Timeout fetching Reddit posts")
+                last_error = "request timed out"
                 break
             except Exception as e:
-                import traceback
-                print(f"[VINYL] Error fetching Reddit posts: {e}")
-                print(f"[VINYL] Traceback: {traceback.format_exc()}")
+                last_error = str(e)
+                logger.exception("[VINYL] Error fetching from Reddit")
                 break
-        
-        print(f"[VINYL] Total posts fetched: {len(posts)}")
-        return posts
+
+        return posts[:limit], last_error
+
+    def _fetch_reddit_posts_oauth(self, limit: int, settings) -> tuple[List[Dict[str, Any]], str | None]:
+        """Fetch via oauth.reddit.com when REDDIT_CLIENT_ID/SECRET are configured."""
+        posts: List[Dict[str, Any]] = []
+        last_error: str | None = None
+        after: str | None = None
+
+        try:
+            token_resp = httpx.post(
+                "https://www.reddit.com/api/v1/access_token",
+                auth=(settings.reddit_client_id, settings.reddit_client_secret),
+                data={"grant_type": "client_credentials"},
+                headers=self.HEADERS,
+                timeout=30,
+            )
+            if token_resp.status_code != 200:
+                return [], f"token HTTP {token_resp.status_code}"
+            token = token_resp.json().get("access_token")
+            if not token:
+                return [], "no access_token in response"
+
+            headers = {
+                **self.HEADERS,
+                "Authorization": f"bearer {token}",
+            }
+
+            while len(posts) < limit:
+                params: Dict[str, Any] = {"limit": min(100, limit - len(posts))}
+                if after:
+                    params["after"] = after
+
+                response = httpx.get(
+                    f"https://oauth.reddit.com/r/{self.SUBREDDIT}/new",
+                    headers=headers,
+                    params=params,
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    last_error = f"HTTP {response.status_code}"
+                    break
+
+                data = response.json().get("data", {})
+                children = data.get("children", [])
+                if not children:
+                    break
+
+                for child in children:
+                    posts.append(child.get("data", {}))
+
+                after = data.get("after")
+                if not after:
+                    break
+
+        except Exception as e:
+            last_error = str(e)
+            logger.exception("[VINYL] OAuth fetch failed")
+
+        return posts[:limit], last_error
+
+    def _fetch_reddit_posts_pullpush(self, limit: int) -> tuple[List[Dict[str, Any]], str | None]:
+        """Fallback: pullpush.io mirrors Reddit submissions (no API key)."""
+        posts: List[Dict[str, Any]] = []
+        before: int | None = None
+        last_error: str | None = None
+
+        while len(posts) < limit:
+            try:
+                batch_size = min(100, limit - len(posts))
+                params: Dict[str, Any] = {
+                    "subreddit": self.SUBREDDIT,
+                    "size": batch_size,
+                    "sort": "desc",
+                    "sort_type": "created_utc",
+                }
+                if before is not None:
+                    params["before"] = before
+
+                response = httpx.get(
+                    self.PULLPUSH_URL,
+                    headers=self.HEADERS,
+                    params=params,
+                    timeout=45,
+                )
+
+                if response.status_code != 200:
+                    last_error = f"HTTP {response.status_code}"
+                    break
+
+                batch = response.json().get("data", [])
+                if not batch:
+                    break
+
+                posts.extend(batch)
+                before = batch[-1].get("created_utc")
+                if before is None:
+                    break
+
+            except httpx.TimeoutException:
+                last_error = "request timed out"
+                break
+            except Exception as e:
+                last_error = str(e)
+                logger.exception("[VINYL] Error fetching from pullpush")
+                break
+
+        return posts[:limit], last_error
     
     def get_vinyl_releases(self, limit: int = 50, skip: int = 0) -> List[VinylRelease]:
         """Get vinyl releases from the database, sorted by posted_at (excluding dismissed)."""
