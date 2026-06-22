@@ -2172,6 +2172,76 @@ body::before {
   flex-shrink: 0;
 }
 
+/* Search modal: stack cover + text, then action — avoids the button crushing titles */
+.search-modal .search-result-item {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-areas:
+    "cover info"
+    "actions actions";
+  align-items: start;
+  gap: 10px 12px;
+}
+
+.search-modal .search-result-cover {
+  grid-area: cover;
+  width: 48px;
+  height: 48px;
+}
+
+.search-modal .search-result-info {
+  grid-area: info;
+  min-width: 0;
+  width: 100%;
+}
+
+.search-modal .search-result-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.search-modal .search-result-artist {
+  white-space: normal;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.search-modal .search-result-meta {
+  flex-wrap: wrap;
+}
+
+.search-modal .search-result-actions {
+  grid-area: actions;
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.search-modal .search-result-actions .add-wishlist-btn {
+  width: auto;
+  max-width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.search-modal .search-result-actions .add-wishlist-btn .add-wishlist-btn-label {
+  display: none;
+}
+
+@media (min-width: 520px) {
+  .search-modal .search-result-actions .add-wishlist-btn .add-wishlist-btn-label {
+    display: inline;
+  }
+}
+
+.search-modal .search-result-actions .status-badge {
+  width: auto;
+  max-width: 100%;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -2266,69 +2336,6 @@ body::before {
   .search-results {
     padding: 0 16px max(16px, env(safe-area-inset-bottom, 0px));
     min-height: 0;
-  }
-
-  .search-result-item {
-    display: grid;
-    grid-template-columns: 48px minmax(0, 1fr);
-    grid-template-areas:
-      "cover info"
-      "actions actions";
-    align-items: start;
-    gap: 10px 12px;
-    padding: 12px;
-  }
-
-  .search-result-cover {
-    grid-area: cover;
-    width: 48px;
-    height: 48px;
-  }
-
-  .search-result-info {
-    grid-area: info;
-    min-width: 0;
-    width: 100%;
-  }
-
-  .search-result-title {
-    font-size: 15px;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: unset;
-    line-height: 1.35;
-    color: var(--text-primary);
-    word-break: break-word;
-  }
-
-  .search-result-artist {
-    white-space: normal;
-    line-height: 1.35;
-    color: var(--text-secondary);
-    word-break: break-word;
-  }
-
-  .search-result-meta {
-    flex-wrap: wrap;
-  }
-
-  .search-result-actions {
-    grid-area: actions;
-    width: 100%;
-  }
-
-  .search-result-actions .add-wishlist-btn {
-    width: 100%;
-    justify-content: center;
-    padding: 10px 14px;
-    font-size: 14px;
-  }
-
-  .search-result-actions .status-badge {
-    width: 100%;
-    justify-content: center;
-    padding: 10px 14px;
-    font-size: 13px;
   }
 }
 

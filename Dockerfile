@@ -12,37 +12,41 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2: Python backend
-FROM python:3.11-slim
+# Stage 2: Python backend (bookworm — stable apt; slim tag tracks trixie and breaks QEMU cross-builds)
+FROM python:3.11-slim-bookworm
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    MUSIC_FOLDER=/music
+    MUSIC_FOLDER=/music \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# QEMU cross-builds (arm64 host → amd64 image) often have clock skew; without this,
+# apt rejects Release signatures as "created after the --not-after date".
+RUN printf '%s\n' \
+    'Acquire::Check-Valid-Until "false";' \
+    'Acquire::Check-Date "false";' \
+    > /etc/apt/apt.conf.d/99no-check-valid-until
 
-# Install Python dependencies (curl_cffi handles AOTY scraping behind Cloudflare)
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Chromium for Playwright — last-resort AOTY fetch when HTTP clients get 403.
-# Installed to a shared path (not ~/.cache) so the audiosource user can launch it.
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+# System deps + Playwright Chromium + nginx in one apt layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libdbus-1-3 libxkbcommon0 libatspi2.0-0 libxcomposite1 libxdamage1 \
     libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
     libx11-6 libxcb1 libxext6 libglib2.0-0 fonts-liberation \
+    nginx \
     && mkdir -p /opt/ms-playwright \
     && playwright install chromium \
     && chmod -R a+rX /opt/ms-playwright \
+    && groupadd -g 1000 audiosource \
+    && useradd -u 1000 -g 1000 -m -s /bin/bash audiosource \
     && rm -rf /var/lib/apt/lists/*
 
 # Install beets for music tagging with deezer and spotify plugins
@@ -53,13 +57,6 @@ COPY backend/ ./backend/
 
 # Copy frontend built assets
 COPY --from=frontend /app/frontend/dist /app/frontend
-
-# Install nginx for serving frontend. We drop privileges in the entrypoint
-# using `runuser` (from util-linux), which is already part of the slim image.
-RUN apt-get update && apt-get install -y --no-install-recommends nginx \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 1000 audiosource \
-    && useradd -u 1000 -g 1000 -m -s /bin/bash audiosource
 
 # Configure nginx
 COPY nginx.conf /etc/nginx/nginx.conf
