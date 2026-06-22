@@ -62,6 +62,9 @@ fi
 # Give PostgreSQL a moment to be fully ready
 sleep 2
 
+# The umask set above is inherited through runuser.
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
+
 # Start nginx in background (still root, so it can bind port 80)
 echo "Starting nginx..."
 nginx -g "daemon off;" &

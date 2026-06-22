@@ -34,6 +34,9 @@ class SlskdConfig:
 
 slskd_config = SlskdConfig()
 
+# Minimum beets match confidence (%) to auto-tag and move into the library.
+AUTO_MOVE_CONFIDENCE_THRESHOLD = 80.0
+
 
 class SlskdClient:
     """Client for interacting with slskd API."""
@@ -926,8 +929,8 @@ class SlskdService:
         
         This method:
         1. Checks the downloaded files with beets for matching
-        2. If confidence >= 95%, auto-applies tags and moves
-        3. If confidence < 95%, sets status to pending_review for user action
+        2. If confidence >= 80%, auto-applies tags and moves
+        3. If confidence < 80%, sets status to pending_review for user action
         """
         import json
         
@@ -965,8 +968,8 @@ class SlskdService:
                 best_match = candidates[0]
                 print(f"slskd: Found {len(candidates)} beets candidates, best match: {best_match.confidence}% ({best_match.artist} - {best_match.album})")
                 
-                # Auto-apply if confidence >= 90%
-                if best_match.confidence >= 90.0:
+                # Auto-apply if confidence meets threshold
+                if best_match.confidence >= AUTO_MOVE_CONFIDENCE_THRESHOLD:
                     print(f"slskd: High confidence match ({best_match.confidence}%), auto-applying tags...")
                     success, applied_info = BeetsService.apply_tags(
                         str(download_folder), 
@@ -987,7 +990,7 @@ class SlskdService:
                         print(f"slskd: Auto-apply failed, falling back to pending_review")
                         # Fall through to pending_review
                 
-                # Confidence < 90% or auto-apply failed - need user review
+                # Below threshold or auto-apply failed - need user review
                 download.beets_candidates = json.dumps([c.to_dict() for c in candidates])
                 download.status = "pending_review"
                 self.db.commit()

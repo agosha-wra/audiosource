@@ -43,29 +43,43 @@ class AOTYService:
         scraper.headers.update(self._BROWSER_HEADERS)
         return scraper
 
+    _CURL_CFFI_PROFILES = (
+        "chrome120",
+        "chrome110",
+        "chrome107",
+        "chrome104",
+        "chrome101",
+        "chrome99",
+        "safari15_5",
+        "edge101",
+    )
+
     def _fetch_html(self, url: str) -> str:
         """
         Fetch AOTY HTML, trying several strategies (Cloudflare often blocks Docker IPs).
-        Order: curl_cffi TLS impersonation -> cloudscraper -> headless Chromium.
+        Order: curl_cffi (several TLS profiles) -> cloudscraper -> headless Chromium.
         """
         errors: List[str] = []
 
-        # 1. curl_cffi — mimics a real Chrome TLS fingerprint (works well in containers)
+        # 1. curl_cffi — try multiple browser TLS fingerprints
         try:
             from curl_cffi import requests as cffi_requests
 
-            logger.info(f"[AOTY] Fetching via curl_cffi: {url}")
-            with cffi_requests.Session(impersonate="chrome120") as session:
-                session.get(f"{self.BASE_URL}/", timeout=30)
-                time.sleep(0.5)
-                response = session.get(url, timeout=60)
-            if response.status_code == 200 and self._looks_like_aoty_page(response.text):
-                return response.text
-            errors.append(f"curl_cffi: HTTP {response.status_code}")
+            for profile in self._CURL_CFFI_PROFILES:
+                try:
+                    logger.info(f"[AOTY] Fetching via curl_cffi ({profile}): {url}")
+                    with cffi_requests.Session(impersonate=profile) as session:
+                        session.get(f"{self.BASE_URL}/", timeout=30)
+                        time.sleep(0.75)
+                        response = session.get(url, timeout=60)
+                    if response.status_code == 200 and self._looks_like_aoty_page(response.text):
+                        return response.text
+                    errors.append(f"curl_cffi/{profile}: HTTP {response.status_code}")
+                except Exception as profile_error:
+                    errors.append(f"curl_cffi/{profile}: {profile_error}")
         except ImportError:
             logger.debug("[AOTY] curl_cffi not installed, skipping")
-        except Exception as e:
-            errors.append(f"curl_cffi: {e}")
+            errors.append("curl_cffi: not installed")
 
         # 2. cloudscraper — warm up session with homepage visit first
         try:
@@ -124,6 +138,8 @@ class AOTYService:
                     ),
                     extra_http_headers=self._BROWSER_HEADERS,
                 )
+                page.goto(f"{self.BASE_URL}/", wait_until="domcontentloaded", timeout=60_000)
+                time.sleep(1)
                 page.goto(url, wait_until="domcontentloaded", timeout=90_000)
                 try:
                     page.wait_for_selector(".albumBlock", timeout=30_000)
