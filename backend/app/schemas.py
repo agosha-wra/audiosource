@@ -258,6 +258,15 @@ class SlskdStatusResponse(BaseModel):
     url: Optional[str] = None
 
 
+class BannedSlskdUserResponse(BaseModel):
+    id: int
+    username: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # ============ Metadata Match Schemas ============
 
 class MetadataMatchCandidate(BaseModel):

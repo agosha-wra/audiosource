@@ -26,6 +26,7 @@ from app.schemas import (
     AOTYEnrichmentStatusResponse,
     DownloadResponse,
     SlskdStatusResponse,
+    BannedSlskdUserResponse,
     MetadataMatchCandidate,
     ApplyMetadataRequest,
     AppSettingsResponse,
@@ -1427,6 +1428,22 @@ def get_slskd_status(db: Session = Depends(get_db)):
     )
 
 
+@app.get("/api/downloads/banned-users", response_model=List[BannedSlskdUserResponse])
+def list_banned_users(db: Session = Depends(get_db)):
+    """List Soulseek users on the download banlist."""
+    service = SlskdService(db)
+    return service.get_banned_users()
+
+
+@app.delete("/api/downloads/banned-users/{username}")
+def unban_user(username: str, db: Session = Depends(get_db)):
+    """Remove a Soulseek user from the download banlist."""
+    service = SlskdService(db)
+    if not service.unban_username(username):
+        raise HTTPException(status_code=404, detail="User is not on the banlist")
+    return {"message": f"Unbanned {username}"}
+
+
 def _build_download_response(download: Download) -> DownloadResponse:
     """Helper to build DownloadResponse with parsed beets JSON fields."""
     import json
@@ -1659,6 +1676,107 @@ def retry_download(
     background_tasks.add_task(run_download_in_background, download.id)
     
     return _build_download_response(download)
+
+
+@app.post("/api/downloads/{download_id}/ban-user-and-restart", response_model=DownloadResponse)
+def ban_user_and_restart_download(
+    download_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Ban the Soulseek user this download is using, then restart the download
+    so another source can be tried.
+    """
+    download = db.query(Download).filter(Download.id == download_id).first()
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+
+    if download.status not in ["downloading", "failed", "searching"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Only downloading, searching, or failed downloads can ban a user and restart",
+        )
+
+    if not download.slskd_username:
+        raise HTTPException(status_code=400, detail="No source user associated with this download yet")
+
+    # Ban immediately so concurrent searches also skip this user
+    service = SlskdService(db)
+    service.ban_username(download.slskd_username)
+
+    # Mark pending so the UI reflects the restart right away
+    download.status = "pending"
+    download.error_message = f"Banned {download.slskd_username}; searching for another source..."
+    download.completed_files = 0
+    download.completed_bytes = 0
+    banned_username = download.slskd_username
+    download.slskd_username = None
+    download.slskd_remote_folder = None
+    download.local_folder_path = None
+    download.started_at = None
+    download.completed_at = None
+    db.commit()
+    db.refresh(download)
+
+    # Cancel transfers / cleanup / re-search in background.
+    # Pass the banned username back via a dedicated background path that
+    # re-reads the banlist (already persisted) and restarts the search.
+    background_tasks.add_task(run_ban_and_restart_after_ban, download.id, banned_username)
+
+    return _build_download_response(download)
+
+
+def run_ban_and_restart_after_ban(download_id: int, banned_username: str):
+    """Cancel transfers for a banned user, cleanup files, and re-search."""
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        with _download_lock:
+            service = SlskdService(db)
+            download = db.query(Download).filter(Download.id == download_id).first()
+            if not download:
+                return
+
+            # Temporarily restore username so cleanup/cancel can find files
+            download.slskd_username = banned_username
+            db.commit()
+
+            try:
+                response = service.client.session.delete(
+                    f"{service.client.config.url}/api/v0/transfers/downloads/{banned_username}",
+                    timeout=10
+                )
+                if response.status_code in [200, 204]:
+                    print(f"slskd: Cancelled downloads from banned user {banned_username}")
+            except Exception as e:
+                print(f"slskd: Error cancelling download from banned user: {e}")
+
+            service._cleanup_download_files(download)
+
+            download.status = "pending"
+            download.error_message = None
+            download.completed_files = 0
+            download.completed_bytes = 0
+            download.total_files = 0
+            download.total_bytes = 0
+            download.slskd_username = None
+            download.slskd_remote_folder = None
+            download.local_folder_path = None
+            download.started_at = None
+            download.completed_at = None
+            db.commit()
+
+            service.search_and_download_album(download_id)
+    except Exception as e:
+        print(f"Ban-and-restart error: {e}")
+        download = db.query(Download).filter(Download.id == download_id).first()
+        if download:
+            download.status = "failed"
+            download.error_message = str(e)
+            db.commit()
+    finally:
+        db.close()
 
 
 @app.delete("/api/downloads/{download_id}")

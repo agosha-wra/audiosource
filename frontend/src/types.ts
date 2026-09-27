@@ -171,6 +171,12 @@ export interface SlskdStatus {
   url: string | null;
 }
 
+export interface BannedSlskdUser {
+  id: number;
+  username: string;
+  created_at: string;
+}
+
 export type View = 'albums' | 'artists' | 'artist-detail' | 'wishlist' | 'new-releases' | 'downloads' | 'vinyl-releases' | 'concerts' | 'settings';
 
 export interface MetadataMatchCandidate {

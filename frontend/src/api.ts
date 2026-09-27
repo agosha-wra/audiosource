@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, BannedSlskdUser, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
 
 const API_BASE = '/api';
 
@@ -169,6 +169,18 @@ export async function retryDownload(downloadId: number): Promise<Download> {
 
 export async function cancelDownload(downloadId: number): Promise<Download> {
   return fetchApi<Download>(`/downloads/${downloadId}/cancel`, { method: 'POST' });
+}
+
+export async function banUserAndRestartDownload(downloadId: number): Promise<Download> {
+  return fetchApi<Download>(`/downloads/${downloadId}/ban-user-and-restart`, { method: 'POST' });
+}
+
+export async function getBannedUsers(): Promise<BannedSlskdUser[]> {
+  return fetchApi<BannedSlskdUser[]>('/downloads/banned-users');
+}
+
+export async function unbanUser(username: string): Promise<void> {
+  await fetchApi(`/downloads/banned-users/${encodeURIComponent(username)}`, { method: 'DELETE' });
 }
 
 export async function deleteDownload(downloadId: number): Promise<void> {

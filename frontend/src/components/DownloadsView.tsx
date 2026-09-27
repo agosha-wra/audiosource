@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Download, SlskdStatus, BeetsCandidate } from '../types';
-import { getDownloads, getSlskdStatus, getDownload, moveDownload, retryDownload, cancelDownload, deleteDownload, getDownloadCandidates, applyDownloadMatch } from '../api';
+import { getDownloads, getSlskdStatus, getDownload, moveDownload, retryDownload, cancelDownload, banUserAndRestartDownload, deleteDownload, getDownloadCandidates, applyDownloadMatch } from '../api';
 
 export default function DownloadsView() {
   const [downloads, setDownloads] = useState<Download[]>([]);
@@ -96,6 +96,21 @@ export default function DownloadsView() {
       setDownloads(prev => prev.map(d => d.id === downloadId ? updated : d));
     } catch (error) {
       console.error('Error cancelling download:', error);
+    }
+  };
+
+  const handleBanUserAndRestart = async (download: Download) => {
+    if (!download.slskd_username) return;
+    const confirmed = window.confirm(
+      `Never download from "${download.slskd_username}" again and restart this download from another user?`
+    );
+    if (!confirmed) return;
+
+    try {
+      const updated = await banUserAndRestartDownload(download.id);
+      setDownloads(prev => prev.map(d => d.id === download.id ? updated : d));
+    } catch (error) {
+      console.error('Error banning user and restarting download:', error);
     }
   };
 
@@ -343,6 +358,17 @@ export default function DownloadsView() {
                     title="Cancel download"
                   >
                     Cancel
+                  </button>
+                )}
+
+                {download.slskd_username &&
+                  ['downloading', 'failed', 'searching'].includes(download.status) && (
+                  <button
+                    className="btn btn-ban"
+                    onClick={() => handleBanUserAndRestart(download)}
+                    title={`Never download from ${download.slskd_username} again and restart download`}
+                  >
+                    Ban user & restart
                   </button>
                 )}
                 
@@ -759,6 +785,16 @@ export default function DownloadsView() {
 
         .btn-cancel:hover {
           opacity: 0.9;
+        }
+
+        .btn-ban {
+          background: var(--bg-secondary);
+          color: var(--accent-red);
+          border: 1px solid var(--accent-red);
+        }
+
+        .btn-ban:hover {
+          background: rgba(239, 68, 68, 0.15);
         }
 
         .btn-review {

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
-from app.models import Download, Album, Artist
+from app.models import Download, Album, Artist, BannedSlskdUser
 from app.config import get_settings
 from app.services.beets_service import BeetsService
 
@@ -221,6 +221,55 @@ class SlskdService:
     def is_available(self) -> bool:
         """Check if slskd is configured and available."""
         return self.client.is_available()
+
+    def get_banned_usernames(self) -> set[str]:
+        """Return banned Soulseek usernames (case-insensitive keys)."""
+        rows = self.db.query(BannedSlskdUser.username).all()
+        return {row[0].lower() for row in rows if row[0]}
+
+    def get_banned_users(self) -> List[BannedSlskdUser]:
+        return self.db.query(BannedSlskdUser).order_by(BannedSlskdUser.created_at.desc()).all()
+
+    def ban_username(self, username: str) -> BannedSlskdUser:
+        """Add a Soulseek user to the banlist. Idempotent."""
+        existing = self.db.query(BannedSlskdUser).filter(
+            BannedSlskdUser.username == username
+        ).first()
+        if existing:
+            return existing
+
+        # Case-insensitive duplicate check
+        for banned in self.db.query(BannedSlskdUser).all():
+            if banned.username.lower() == username.lower():
+                return banned
+
+        banned = BannedSlskdUser(username=username)
+        self.db.add(banned)
+        self.db.commit()
+        self.db.refresh(banned)
+        print(f"slskd: Banned user '{username}'")
+        return banned
+
+    def unban_username(self, username: str) -> bool:
+        """Remove a user from the banlist. Returns True if a row was deleted."""
+        banned = self.db.query(BannedSlskdUser).filter(
+            BannedSlskdUser.username == username
+        ).first()
+        if not banned:
+            # Case-insensitive fallback
+            banned = next(
+                (
+                    row for row in self.db.query(BannedSlskdUser).all()
+                    if row.username.lower() == username.lower()
+                ),
+                None,
+            )
+        if not banned:
+            return False
+        self.db.delete(banned)
+        self.db.commit()
+        print(f"slskd: Unbanned user '{username}'")
+        return True
     
     def search_and_download_album(self, download_id: int) -> Optional[Download]:
         """
@@ -343,28 +392,47 @@ class SlskdService:
                 download.error_message = "No suitable sources found"
                 self.db.commit()
                 return download
+
+            banned = self.get_banned_usernames()
+            if banned:
+                before = len(all_candidates)
+                all_candidates = [
+                    c for c in all_candidates
+                    if c["username"].lower() not in banned
+                ]
+                skipped = before - len(all_candidates)
+                if skipped:
+                    print(f"slskd: Skipped {skipped} candidate(s) from banned users")
+
+            if not all_candidates:
+                download.status = "failed"
+                download.error_message = "No suitable sources found (all candidates are banned)"
+                self.db.commit()
+                return download
             
-            # Sort by score and try to download from best candidate (single folder)
+            # Sort by score and try candidates until one starts successfully
             all_candidates.sort(key=lambda x: x["score"], reverse=True)
             
             print(f"slskd: Found {len(all_candidates)} candidate folders")
             for i, c in enumerate(all_candidates[:5]):
                 print(f"slskd:   #{i+1} score={c['score']} tracks={c['track_count']} user={c['username']} folder={c.get('folder', 'unknown')}")
             
-            # Only try the single best candidate
-            best = all_candidates[0]
-            print(f"slskd: Downloading from best candidate: {best['username']} - {best.get('folder', 'unknown')} (score={best['score']}, {best['track_count']} tracks)")
-            
-            if self.client.download_files(best["username"], best["files"]):
-                download.status = "downloading"
-                download.slskd_username = best["username"]
-                download.slskd_remote_folder = best.get("folder") or None
-                download.local_folder_path = None
-                download.total_files = len(best["files"])
-                download.total_bytes = sum(f.get("size", 0) for f in best["files"])
-                download.started_at = datetime.utcnow()
-                self.db.commit()
-                return download
+            for best in all_candidates[:5]:
+                print(
+                    f"slskd: Downloading from candidate: {best['username']} - "
+                    f"{best.get('folder', 'unknown')} (score={best['score']}, {best['track_count']} tracks)"
+                )
+                
+                if self.client.download_files(best["username"], best["files"]):
+                    download.status = "downloading"
+                    download.slskd_username = best["username"]
+                    download.slskd_remote_folder = best.get("folder") or None
+                    download.local_folder_path = None
+                    download.total_files = len(best["files"])
+                    download.total_bytes = sum(f.get("size", 0) for f in best["files"])
+                    download.started_at = datetime.utcnow()
+                    self.db.commit()
+                    return download
             
             download.status = "failed"
             download.error_message = "Failed to start download from any source"
@@ -808,6 +876,56 @@ class SlskdService:
         self.db.commit()
         
         # Run the search again
+        return self.search_and_download_album(download_id)
+
+    def ban_user_and_restart(self, download_id: int) -> Optional[Download]:
+        """
+        Ban the Soulseek user currently associated with this download,
+        cancel/cleanup the current attempt, and restart the search so
+        another user can be tried.
+        """
+        download = self.db.query(Download).filter(Download.id == download_id).first()
+        if not download:
+            return None
+
+        if download.status not in ["downloading", "failed", "searching"]:
+            return download
+
+        username = download.slskd_username
+        if not username:
+            download.error_message = "No source user to ban yet"
+            self.db.commit()
+            return download
+
+        self.ban_username(username)
+
+        # Cancel active transfers from this user in slskd
+        if download.status in ["searching", "downloading"]:
+            try:
+                response = self.client.session.delete(
+                    f"{self.client.config.url}/api/v0/transfers/downloads/{username}",
+                    timeout=10
+                )
+                if response.status_code in [200, 204]:
+                    print(f"slskd: Cancelled downloads from banned user {username}")
+            except Exception as e:
+                print(f"slskd: Error cancelling download from banned user: {e}")
+
+        self._cleanup_download_files(download)
+
+        download.status = "pending"
+        download.error_message = None
+        download.completed_files = 0
+        download.completed_bytes = 0
+        download.total_files = 0
+        download.total_bytes = 0
+        download.slskd_username = None
+        download.slskd_remote_folder = None
+        download.local_folder_path = None
+        download.started_at = None
+        download.completed_at = None
+        self.db.commit()
+
         return self.search_and_download_album(download_id)
     
     def cancel_download(self, download_id: int) -> Optional[Download]:

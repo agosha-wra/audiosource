@@ -132,6 +132,15 @@ class NewReleasesScrapeStatus(Base):
     error_message = Column(Text, nullable=True)
 
 
+class BannedSlskdUser(Base):
+    """Soulseek users we should never download from again."""
+    __tablename__ = "banned_slskd_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(255), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Download(Base):
     """Tracks downloads from slskd."""
     __tablename__ = "downloads"

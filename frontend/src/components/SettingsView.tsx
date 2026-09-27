@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import type { AppSettings } from '../types';
-import { getAppSettings } from '../api';
+import type { AppSettings, BannedSlskdUser } from '../types';
+import { getAppSettings, getBannedUsers, unbanUser } from '../api';
 
 // Preset accent colors
 const ACCENT_COLORS = [
@@ -17,6 +17,8 @@ const ACCENT_COLORS = [
 export default function SettingsView() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bannedUsers, setBannedUsers] = useState<BannedSlskdUser[]>([]);
+  const [bannedLoading, setBannedLoading] = useState(true);
   const [accentColor, setAccentColor] = useState(() => {
     return localStorage.getItem('accentColor') || '#f97316';
   });
@@ -33,8 +35,29 @@ export default function SettingsView() {
       }
     };
 
+    const fetchBannedUsers = async () => {
+      try {
+        const users = await getBannedUsers();
+        setBannedUsers(users);
+      } catch (error) {
+        console.error('Error fetching banned users:', error);
+      } finally {
+        setBannedLoading(false);
+      }
+    };
+
     fetchSettings();
+    fetchBannedUsers();
   }, []);
+
+  const handleUnban = async (username: string) => {
+    try {
+      await unbanUser(username);
+      setBannedUsers(prev => prev.filter(u => u.username !== username));
+    } catch (error) {
+      console.error('Error unbanning user:', error);
+    }
+  };
 
   const handleColorChange = (color: string, hoverColor: string) => {
     setAccentColor(color);
@@ -134,6 +157,41 @@ export default function SettingsView() {
               </div>
             ) : (
               <div className="error-state">Failed to load settings</div>
+            )}
+          </section>
+
+          {/* Banned Soulseek Users */}
+          <section className="settings-section">
+            <h2>Banned Soulseek Users</h2>
+            <p className="section-description">
+              Downloads will never use these users as sources. Ban someone from an ongoing or failed download in the Downloads view.
+            </p>
+            {bannedLoading ? (
+              <div className="loading">
+                <div className="loading-spinner" />
+              </div>
+            ) : bannedUsers.length === 0 ? (
+              <p className="muted">No banned users.</p>
+            ) : (
+              <div className="banned-list">
+                {bannedUsers.map(user => (
+                  <div key={user.id} className="banned-item">
+                    <div className="banned-info">
+                      <span className="banned-username">{user.username}</span>
+                      <span className="banned-date">
+                        Banned {new Date(user.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <button
+                      className="unban-btn"
+                      onClick={() => handleUnban(user.username)}
+                      title={`Allow downloads from ${user.username} again`}
+                    >
+                      Unban
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </section>
 
@@ -271,6 +329,63 @@ export default function SettingsView() {
           color: var(--accent-red);
           text-align: center;
           padding: 20px;
+        }
+
+        .banned-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .banned-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          padding: 12px 16px;
+          background: var(--bg-secondary);
+          border-radius: 8px;
+        }
+
+        .banned-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-width: 0;
+        }
+
+        .banned-username {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--text-primary);
+          font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .banned-date {
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+
+        .unban-btn {
+          padding: 6px 12px;
+          border-radius: 6px;
+          border: none;
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .unban-btn:hover {
+          background: var(--bg-hover, #333);
+        }
+
+        .muted {
+          color: var(--text-muted);
+          font-size: 13px;
+          margin: 0;
         }
       `}</style>
     </>
