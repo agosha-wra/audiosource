@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import type { MusicBrainzSearchResult } from '../types';
-import { searchMusicBrainz, addToWishlist } from '../api';
+import type { MusicBrainzSearchResult, SlskdStatus } from '../types';
+import { searchMusicBrainz, addToWishlist, startDownload, getSlskdStatus } from '../api';
 
 interface SearchModalProps {
   onClose: () => void;
@@ -11,8 +11,10 @@ export default function SearchModal({ onClose, onAlbumAdded }: SearchModalProps)
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MusicBrainzSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
+  const [pendingAction, setPendingAction] = useState<Record<string, 'add' | 'download'>>({});
+  const [slskdStatus, setSlskdStatus] = useState<SlskdStatus | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const canDownload = Boolean(slskdStatus?.enabled && slskdStatus?.available);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -21,6 +23,7 @@ export default function SearchModal({ onClose, onAlbumAdded }: SearchModalProps)
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', handleEscape);
+    getSlskdStatus().then(setSlskdStatus).catch(() => setSlskdStatus(null));
     return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
 
@@ -45,40 +48,66 @@ export default function SearchModal({ onClose, onAlbumAdded }: SearchModalProps)
     return () => clearTimeout(debounce);
   }, [query]);
 
-  const handleAdd = async (result: MusicBrainzSearchResult) => {
-    if (addingIds.has(result.musicbrainz_id)) return;
-    
-    setAddingIds(prev => new Set([...prev, result.musicbrainz_id]));
-    
+  const wishlistPayload = (result: MusicBrainzSearchResult) => ({
+    album_id: result.existing_album_id || undefined,
+    musicbrainz_id: result.musicbrainz_id,
+    title: result.title,
+    artist_name: result.artist_name || undefined,
+    artist_musicbrainz_id: result.artist_musicbrainz_id || undefined,
+    release_date: result.release_date || undefined,
+    release_type: result.release_type || undefined,
+    cover_art_url: result.cover_art_url || undefined,
+  });
+
+  const markWishlisted = (musicbrainzId: string) => {
+    setResults(prev => prev.map(r =>
+      r.musicbrainz_id === musicbrainzId
+        ? { ...r, is_wishlisted: true }
+        : r
+    ));
+  };
+
+  const withPending = async (
+    musicbrainzId: string,
+    actionName: 'add' | 'download',
+    action: () => Promise<void>
+  ) => {
+    if (pendingAction[musicbrainzId]) return;
+    setPendingAction(prev => ({ ...prev, [musicbrainzId]: actionName }));
     try {
-      await addToWishlist({
-        album_id: result.existing_album_id || undefined,
-        musicbrainz_id: result.musicbrainz_id,
-        title: result.title,
-        artist_name: result.artist_name || undefined,
-        artist_musicbrainz_id: result.artist_musicbrainz_id || undefined,
-        release_date: result.release_date || undefined,
-        release_type: result.release_type || undefined,
-        cover_art_url: result.cover_art_url || undefined,
-      });
-      
-      // Update result to show it's wishlisted
-      setResults(prev => prev.map(r => 
-        r.musicbrainz_id === result.musicbrainz_id 
-          ? { ...r, is_wishlisted: true }
-          : r
-      ));
-      
-      onAlbumAdded();
-    } catch (error) {
-      console.error('Error adding to wishlist:', error);
+      await action();
     } finally {
-      setAddingIds(prev => {
-        const next = new Set(prev);
-        next.delete(result.musicbrainz_id);
+      setPendingAction(prev => {
+        const next = { ...prev };
+        delete next[musicbrainzId];
         return next;
       });
     }
+  };
+
+  const handleAdd = (result: MusicBrainzSearchResult) => {
+    void withPending(result.musicbrainz_id, 'add', async () => {
+      try {
+        await addToWishlist(wishlistPayload(result));
+        markWishlisted(result.musicbrainz_id);
+        onAlbumAdded();
+      } catch (error) {
+        console.error('Error adding to wishlist:', error);
+      }
+    });
+  };
+
+  const handleAddAndDownload = (result: MusicBrainzSearchResult) => {
+    void withPending(result.musicbrainz_id, 'download', async () => {
+      try {
+        const album = await addToWishlist(wishlistPayload(result));
+        markWishlisted(result.musicbrainz_id);
+        onAlbumAdded();
+        await startDownload(album.id);
+      } catch (error) {
+        console.error('Error adding album and starting download:', error);
+      }
+    });
   };
 
   return (
@@ -175,24 +204,48 @@ export default function SearchModal({ onClose, onAlbumAdded }: SearchModalProps)
                       Wishlisted
                     </span>
                   ) : (
-                    <button
-                      className="add-wishlist-btn"
-                      onClick={() => handleAdd(result)}
-                      disabled={addingIds.has(result.musicbrainz_id)}
-                      aria-label={`Add ${result.title} to wishlist`}
-                      title="Add to wishlist"
-                    >
-                      {addingIds.has(result.musicbrainz_id) ? (
-                        <div className="btn-spinner" />
-                      ) : (
-                        <>
+                    <>
+                      <button
+                        className="add-wishlist-btn"
+                        onClick={() => handleAdd(result)}
+                        disabled={Boolean(pendingAction[result.musicbrainz_id])}
+                        aria-label={`Add ${result.title} to wishlist`}
+                        title="Add to wishlist"
+                      >
+                        {pendingAction[result.musicbrainz_id] === 'add' ? (
+                          <div className="btn-spinner" />
+                        ) : (
+                          <>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                            </svg>
+                            <span className="add-wishlist-btn-label">Add to Wishlist</span>
+                          </>
+                        )}
+                      </button>
+                      {canDownload && (
+                        <button
+                          className="add-wishlist-btn add-download-btn"
+                          onClick={() => handleAddAndDownload(result)}
+                          disabled={Boolean(pendingAction[result.musicbrainz_id])}
+                          aria-label={`Add ${result.title} and start download`}
+                          title="Add album and launch download"
+                        >
+                          {pendingAction[result.musicbrainz_id] === 'download' ? (
+                            <div className="btn-spinner" />
+                          ) : (
+                          <>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
                           </svg>
-                          <span className="add-wishlist-btn-label">Add to Wishlist</span>
-                        </>
+                          <span className="add-wishlist-btn-label">Add album and launch download</span>
+                          </>
+                          )}
+                        </button>
                       )}
-                    </button>
+                    </>
                   )}
                 </div>
               </div>

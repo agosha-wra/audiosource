@@ -8,6 +8,19 @@ interface WishlistViewProps {
   onOpenSearch: () => void;
 }
 
+const SORT_OPTIONS = [
+  { value: 'date_added', label: 'Date added' },
+  { value: 'release_date', label: 'Release date' },
+  { value: 'artist', label: 'Artist' },
+  { value: 'album', label: 'Album' },
+] as const;
+
+type WishlistSort = typeof SORT_OPTIONS[number]['value'];
+
+function compareText(a: string, b: string) {
+  return a.localeCompare(b, undefined, { sensitivity: 'base' });
+}
+
 export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistViewProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
@@ -15,6 +28,7 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
   const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
   const [hideUpcoming, setHideUpcoming] = useState(false);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<WishlistSort>('date_added');
 
   const fetchSlskdStatus = useCallback(async () => {
     try {
@@ -92,7 +106,24 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
         (album.artist?.name?.toLowerCase().includes(q) ?? false)
       );
     }
-  );
+  ).sort((a, b) => {
+    if (sort === 'release_date') {
+      if (!a.release_date && !b.release_date) return compareText(a.title, b.title);
+      if (!a.release_date) return 1;
+      if (!b.release_date) return -1;
+      const byDate = compareText(b.release_date, a.release_date);
+      return byDate !== 0 ? byDate : compareText(a.title, b.title);
+    }
+    if (sort === 'artist') {
+      const byArtist = compareText(a.artist?.name || '', b.artist?.name || '');
+      return byArtist !== 0 ? byArtist : compareText(a.title, b.title);
+    }
+    if (sort === 'album') {
+      return compareText(a.title, b.title);
+    }
+    const byAdded = compareText(b.created_at, a.created_at);
+    return byAdded !== 0 ? byAdded : compareText(a.title, b.title);
+  });
 
   return (
     <>
@@ -112,6 +143,16 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
             />
           </div>
           <div className="header-controls-toolbar">
+            <select
+              className="sort-select"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as WishlistSort)}
+              aria-label="Sort wishlist"
+            >
+              {SORT_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
             <label className="checkbox-label">
               <input
                 type="checkbox"

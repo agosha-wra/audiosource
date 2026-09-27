@@ -888,10 +888,18 @@ def get_stats(db: Session = Depends(get_db)):
 # ============ Wishlist Endpoints ============
 
 @app.get("/api/wishlist", response_model=List[AlbumResponse])
-def get_wishlist(db: Session = Depends(get_db)):
+def get_wishlist(sort: str = "date_added", db: Session = Depends(get_db)):
     """Get all wishlisted albums."""
-    albums = db.query(Album).filter(Album.is_wishlisted == True).order_by(Album.title).all()
-    return albums
+    query = db.query(Album).filter(Album.is_wishlisted == True)
+    if sort == "release_date":
+        query = query.order_by(Album.release_date.desc().nullslast(), Album.title)
+    elif sort == "artist":
+        query = query.outerjoin(Artist).order_by(Artist.name, Album.title)
+    elif sort == "album":
+        query = query.order_by(Album.title)
+    else:
+        query = query.order_by(Album.created_at.desc(), Album.title)
+    return query.all()
 
 
 @app.post("/api/wishlist", response_model=AlbumResponse)
@@ -1171,6 +1179,40 @@ def fetch_missing_albums(
 
 # Background task lock for AOTY scraping
 _aoty_lock = threading.Lock()
+_aoty_running_lock = threading.Lock()
+_aoty_running = False
+
+
+def _aoty_is_running() -> bool:
+    with _aoty_running_lock:
+        return _aoty_running
+
+
+def _aoty_set_running(running: bool) -> None:
+    global _aoty_running
+    with _aoty_running_lock:
+        _aoty_running = running
+
+
+def _release_stale_aoty_status(status: NewReleasesScrapeStatus, db: Session) -> NewReleasesScrapeStatus:
+    """
+    A restart or a crashed thread can leave status as pending/scraping.
+    The new-releases button treats that as in progress and stays disabled,
+    so clear it when no scrape thread is actually running.
+    """
+    if status.status not in ("scraping", "pending") or _aoty_is_running():
+        return status
+
+    started = status.last_scrape_at
+    if started and datetime.utcnow() - started < timedelta(seconds=20):
+        return status
+
+    print(f"[AOTY] Clearing stale {status.status} status (no scrape thread running)")
+    status.status = "error"
+    status.error_message = "Previous fetch stopped before it finished. Try again."
+    db.commit()
+    db.refresh(status)
+    return status
 
 
 def run_aoty_scrape_in_background(year: int = None, week: int = None):
@@ -1193,6 +1235,7 @@ def run_aoty_scrape_in_background(year: int = None, week: int = None):
         except Exception:
             pass
     finally:
+        _aoty_set_running(False)
         db.close()
 
 
@@ -1207,29 +1250,10 @@ def scrape_new_releases(
     Scrapes the weekly releases sorted by critic score.
     """
     service = AOTYService(db)
-    status = service.get_or_create_scrape_status()
+    status = _release_stale_aoty_status(service.get_or_create_scrape_status(), db)
 
-    # Reset stuck pending/scraping jobs (same pattern as vinyl releases)
-    if status.status in ("scraping", "pending"):
-        stuck_threshold = timedelta(minutes=10)
-        if status.last_scrape_at and datetime.utcnow() - status.last_scrape_at > stuck_threshold:
-            print(f"[AOTY] Resetting stuck scrape status (started {status.last_scrape_at})")
-            status.status = "idle"
-            status.error_message = "Previous scrape timed out"
-            db.commit()
-            db.refresh(status)
-        elif status.status == "scraping":
-            return status
-        elif status.status == "pending":
-            # Pending without progress — allow a new attempt after a short grace period
-            if status.last_scrape_at and datetime.utcnow() - status.last_scrape_at > timedelta(minutes=2):
-                print("[AOTY] Resetting stale pending scrape status")
-                status.status = "idle"
-                status.error_message = None
-                db.commit()
-                db.refresh(status)
-            else:
-                return status
+    if _aoty_is_running():
+        return status
 
     status.status = "pending"
     status.last_scrape_at = datetime.utcnow()
@@ -1237,12 +1261,20 @@ def scrape_new_releases(
     db.commit()
     db.refresh(status)
 
+    _aoty_set_running(True)
     thread = threading.Thread(
         target=run_aoty_scrape_in_background,
         args=(year, week),
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        _aoty_set_running(False)
+        status.status = "error"
+        status.error_message = "Could not start the fetch"
+        db.commit()
+        db.refresh(status)
 
     return status
 
@@ -1251,7 +1283,7 @@ def scrape_new_releases(
 def get_new_releases_scrape_status(db: Session = Depends(get_db)):
     """Get the current AOTY scrape status."""
     service = AOTYService(db)
-    return service.get_or_create_scrape_status()
+    return _release_stale_aoty_status(service.get_or_create_scrape_status(), db)
 
 
 @app.get("/api/new-releases", response_model=List[NewReleaseResponse])

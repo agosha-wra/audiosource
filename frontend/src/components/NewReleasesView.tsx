@@ -59,6 +59,7 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
   const [loading, setLoading] = useState(true);
   const [scrapeStatus, setScrapeStatus] = useState<NewReleasesScrapeStatus | null>(null);
   const [isScraping, setIsScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
   const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
   const [wishlisted, setWishlisted] = useState<Set<number>>(new Set());
   const [addingToWishlist, setAddingToWishlist] = useState<Set<number>>(new Set());
@@ -104,6 +105,9 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
       const status = await fetchScrapeStatus();
       if (status && (status.status === 'completed' || status.status === 'error' || status.status === 'idle')) {
         setIsScraping(false);
+        if (status.status === 'error' && status.error_message) {
+          setScrapeError(status.error_message);
+        }
         fetchReleases(selectedYear, selectedWeek);
       }
     }, 1000);
@@ -112,17 +116,24 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
   }, [isScraping, fetchScrapeStatus, fetchReleases, selectedYear, selectedWeek]);
 
   const handleScrape = async () => {
+    setScrapeError(null);
+    setIsScraping(true);
     try {
       const status = await scrapeNewReleases(selectedYear, selectedWeek);
       setScrapeStatus(status);
       if (status.status === 'scraping' || status.status === 'pending') {
         setIsScraping(true);
       } else {
+        setIsScraping(false);
+        if (status.status === 'error' && status.error_message) {
+          setScrapeError(status.error_message);
+        }
         fetchReleases(selectedYear, selectedWeek);
       }
     } catch (error) {
       console.error('Error starting scrape:', error);
       setIsScraping(false);
+      setScrapeError('Could not start the fetch. Try again.');
     }
   };
 
@@ -230,8 +241,8 @@ export default function NewReleasesView({ onWishlistChange, initialYear, initial
         <div className="header-actions">
           <span className="scrape-info">
             Last updated: {formatLastScrape(scrapeStatus?.last_scrape_at ?? null)}
-            {scrapeStatus?.status === 'error' && scrapeStatus.error_message && (
-              <> · <span className="scrape-error" title={scrapeStatus.error_message}>Failed</span></>
+            {(scrapeError || (scrapeStatus?.status === 'error' && scrapeStatus.error_message)) && (
+              <> · <span className="scrape-error" title={scrapeError || scrapeStatus?.error_message || ''}>Failed</span></>
             )}
           </span>
           <button 
