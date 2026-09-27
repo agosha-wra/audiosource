@@ -159,8 +159,8 @@ export async function startDownload(albumId: number): Promise<Download> {
   return fetchApi<Download>(`/downloads/${albumId}`, { method: 'POST' });
 }
 
-export async function moveDownload(downloadId: number): Promise<void> {
-  await fetchApi(`/downloads/${downloadId}/move`, { method: 'POST' });
+export async function moveDownload(downloadId: number): Promise<Download> {
+  return fetchApi<Download>(`/downloads/${downloadId}/move`, { method: 'POST' });
 }
 
 export async function retryDownload(downloadId: number): Promise<Download> {

@@ -39,14 +39,14 @@ export default function DownloadsView() {
   // Auto-refresh active downloads
   useEffect(() => {
     const hasActiveDownloads = downloads.some(d => 
-      ['pending', 'searching', 'downloading'].includes(d.status)
+      ['pending', 'searching', 'downloading', 'matching'].includes(d.status)
     );
 
     if (!hasActiveDownloads) return;
 
     const interval = setInterval(async () => {
       const activeDownloads = downloads.filter(d => 
-        ['pending', 'searching', 'downloading'].includes(d.status)
+        ['pending', 'searching', 'downloading', 'matching'].includes(d.status)
       );
 
       for (const download of activeDownloads) {
@@ -64,9 +64,8 @@ export default function DownloadsView() {
 
   const handleMove = async (downloadId: number) => {
     try {
-      await moveDownload(downloadId);
-      // Refresh after a short delay
-      setTimeout(fetchDownloads, 1000);
+      const updated = await moveDownload(downloadId);
+      setDownloads(prev => prev.map(d => d.id === downloadId ? updated : d));
     } catch (error) {
       console.error('Error moving download:', error);
     }
@@ -155,6 +154,7 @@ export default function DownloadsView() {
     switch (status) {
       case 'pending':
       case 'searching':
+      case 'matching':
         return 'var(--accent-blue)';
       case 'downloading':
         return 'var(--accent-yellow)';
@@ -179,6 +179,8 @@ export default function DownloadsView() {
         return 'Pending';
       case 'searching':
         return 'Searching...';
+      case 'matching':
+        return 'Matching tags...';
       case 'downloading':
         return 'Downloading';
       case 'completed':

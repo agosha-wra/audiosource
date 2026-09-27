@@ -7,6 +7,7 @@ import os
 import re
 import time
 import shutil
+import threading
 import requests
 from pathlib import Path
 from datetime import datetime
@@ -36,6 +37,24 @@ slskd_config = SlskdConfig()
 
 # Minimum beets match confidence (%) to auto-tag and move into the library.
 AUTO_MOVE_CONFIDENCE_THRESHOLD = 80.0
+
+# One MusicBrainz/beets lookup per download. Overlapping progress polls used to
+# see status "completed" and show Move to Library while the lookup was still running.
+_match_guard = threading.Lock()
+_matches_in_progress: set[int] = set()
+
+
+def try_start_match(download_id: int) -> bool:
+    with _match_guard:
+        if download_id in _matches_in_progress:
+            return False
+        _matches_in_progress.add(download_id)
+        return True
+
+
+def end_match(download_id: int) -> None:
+    with _match_guard:
+        _matches_in_progress.discard(download_id)
 
 
 class SlskdClient:
@@ -833,19 +852,17 @@ class SlskdService:
                                 self._cleanup_download_files(download)
                                 return download
                             elif failed_files > 0:
-                                # Majority succeeded but some failed - completed with warning, NO auto-move
-                                download.status = "completed"
+                                # Majority succeeded but some failed. Look up tags, but don't
+                                # auto-import an incomplete album.
                                 download.error_message = f"{failed_files} of {total_files} files failed"
                                 download.completed_at = datetime.utcnow()
-                                print(f"slskd: Download {download.id} completed with {failed_files} failures - NOT auto-moving")
+                                print(f"slskd: Download {download.id} completed with {failed_files} failures - matching tags, not auto-moving")
+                                self._match_then_import(download, auto_apply=False)
+                                return download
                             else:
-                                # All complete - automatically move to library
-                                download.status = "completed"
                                 download.completed_at = datetime.utcnow()
-                                print(f"slskd: Download {download.id} completed successfully! Auto-moving to library...")
-                                self.db.commit()
-                                # Auto-move to library
-                                self.move_completed_download(download.id)
+                                print(f"slskd: Download {download.id} completed successfully! Matching tags...")
+                                self._match_then_import(download, auto_apply=True)
                                 return download
                     
                     self.db.commit()
@@ -1041,19 +1058,38 @@ class SlskdService:
         
         return cancelled_count
     
-    def move_completed_download(self, download_id: int) -> bool:
+    def _match_then_import(self, download: Download, auto_apply: bool) -> Optional[Download]:
+        """
+        Mark the download as waiting on MusicBrainz, then run the lookup.
+        Concurrent callers see status "matching" instead of a Move to Library button.
+        """
+        if not try_start_match(download.id):
+            self.db.rollback()
+            self.db.refresh(download)
+            return download
+
+        download.status = "matching"
+        self.db.commit()
+        try:
+            self.move_completed_download(download.id, auto_apply=auto_apply)
+        finally:
+            end_match(download.id)
+        self.db.refresh(download)
+        return download
+
+    def move_completed_download(self, download_id: int, auto_apply: bool = True) -> bool:
         """
         Move completed download to music library with beets tagging.
         
         This method:
         1. Checks the downloaded files with beets for matching
-        2. If confidence >= 80%, auto-applies tags and moves
-        3. If confidence < 80%, sets status to pending_review for user action
+        2. If confidence >= 80% and auto_apply, auto-applies tags and moves
+        3. Otherwise sets status to pending_review for user action
         """
         import json
         
         download = self.db.query(Download).filter(Download.id == download_id).first()
-        if not download or download.status != "completed":
+        if not download or download.status not in ("completed", "matching"):
             return False
         
         # Safety check: don't move if most files failed
@@ -1061,6 +1097,9 @@ class SlskdService:
             success_rate = download.completed_files / download.total_files
             if success_rate < 0.5:
                 print(f"slskd: Refusing to move download {download_id} - only {download.completed_files}/{download.total_files} files completed")
+                download.status = "failed"
+                download.error_message = f"Only {download.completed_files} of {download.total_files} files downloaded ({int(success_rate*100)}%)"
+                self.db.commit()
                 return False
         
         try:
@@ -1087,7 +1126,7 @@ class SlskdService:
                 print(f"slskd: Found {len(candidates)} beets candidates, best match: {best_match.confidence}% ({best_match.artist} - {best_match.album})")
                 
                 # Auto-apply if confidence meets threshold
-                if best_match.confidence >= AUTO_MOVE_CONFIDENCE_THRESHOLD:
+                if auto_apply and best_match.confidence >= AUTO_MOVE_CONFIDENCE_THRESHOLD:
                     print(f"slskd: High confidence match ({best_match.confidence}%), auto-applying tags...")
                     success, applied_info = BeetsService.apply_tags(
                         str(download_folder), 
@@ -1124,6 +1163,7 @@ class SlskdService:
             
         except Exception as e:
             print(f"slskd: Error in move_completed_download: {e}")
+            download.status = "pending_review"
             download.error_message = f"Failed to process download: {e}"
             self.db.commit()
             return False

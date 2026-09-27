@@ -1407,6 +1407,7 @@ def run_download_in_background(download_id: int):
 
 def run_move_download_in_background(download_id: int):
     """Move completed download to music library in background."""
+    from app.services.slskd import end_match
     db = SessionLocal()
     try:
         service = SlskdService(db)
@@ -1414,6 +1415,7 @@ def run_move_download_in_background(download_id: int):
     except Exception as e:
         print(f"Move download error: {e}")
     finally:
+        end_match(download_id)
         db.close()
 
 
@@ -1558,23 +1560,37 @@ def get_download(download_id: int, db: Session = Depends(get_db)):
     return _build_download_response(download)
 
 
-@app.post("/api/downloads/{download_id}/move")
+@app.post("/api/downloads/{download_id}/move", response_model=DownloadResponse)
 def move_download(
     download_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Move a completed download to the music library."""
+    """Look up tags for a completed download, then move or ask for review."""
+    from app.services.slskd import try_start_match
+
     download = db.query(Download).filter(Download.id == download_id).first()
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
     
+    if download.status == "matching":
+        return _build_download_response(download)
+
     if download.status != "completed":
         raise HTTPException(status_code=400, detail="Download is not completed")
+
+    if not try_start_match(download.id):
+        db.refresh(download)
+        return _build_download_response(download)
+
+    download.status = "matching"
+    download.error_message = None
+    db.commit()
+    db.refresh(download)
     
     background_tasks.add_task(run_move_download_in_background, download_id)
     
-    return {"message": "Moving download to music library"}
+    return _build_download_response(download)
 
 
 @app.get("/api/downloads/{download_id}/candidates", response_model=List[BeetsCandidateResponse])

@@ -155,7 +155,7 @@ export interface Download {
   completed_files: number;
   total_bytes: number;
   completed_bytes: number;
-  status: 'pending' | 'searching' | 'downloading' | 'completed' | 'pending_review' | 'failed' | 'moved' | 'cancelled';
+  status: 'pending' | 'searching' | 'downloading' | 'matching' | 'completed' | 'pending_review' | 'failed' | 'moved' | 'cancelled';
   error_message: string | null;
   created_at: string;
   started_at: string | null;

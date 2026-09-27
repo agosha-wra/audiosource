@@ -162,7 +162,7 @@ class Download(Base):
     completed_bytes = Column(Integer, default=0)
     
     # Status
-    # pending, searching, downloading, completed, pending_review, failed, moved, cancelled
+    # pending, searching, downloading, matching, completed, pending_review, failed, moved, cancelled
     status = Column(String(50), default="pending")
     error_message = Column(Text, nullable=True)
     
