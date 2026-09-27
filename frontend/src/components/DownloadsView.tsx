@@ -362,7 +362,7 @@ export default function DownloadsView() {
                 )}
 
                 {download.slskd_username &&
-                  ['downloading', 'failed', 'searching'].includes(download.status) && (
+                  ['downloading', 'failed', 'searching', 'completed', 'pending_review'].includes(download.status) && (
                   <button
                     className="btn btn-ban"
                     onClick={() => handleBanUserAndRestart(download)}

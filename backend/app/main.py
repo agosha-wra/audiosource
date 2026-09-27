@@ -1692,10 +1692,10 @@ def ban_user_and_restart_download(
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
 
-    if download.status not in ["downloading", "failed", "searching"]:
+    if download.status not in ["downloading", "failed", "searching", "completed", "pending_review"]:
         raise HTTPException(
             status_code=400,
-            detail="Only downloading, searching, or failed downloads can ban a user and restart",
+            detail="Only active, failed, completed, or pending-review downloads can ban a user and restart",
         )
 
     if not download.slskd_username:
@@ -1716,6 +1716,8 @@ def ban_user_and_restart_download(
     download.local_folder_path = None
     download.started_at = None
     download.completed_at = None
+    download.beets_candidates = None
+    download.beets_applied_match = None
     db.commit()
     db.refresh(download)
 
@@ -1765,6 +1767,8 @@ def run_ban_and_restart_after_ban(download_id: int, banned_username: str):
             download.local_folder_path = None
             download.started_at = None
             download.completed_at = None
+            download.beets_candidates = None
+            download.beets_applied_match = None
             db.commit()
 
             service.search_and_download_album(download_id)

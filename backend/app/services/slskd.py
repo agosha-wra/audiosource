@@ -888,7 +888,7 @@ class SlskdService:
         if not download:
             return None
 
-        if download.status not in ["downloading", "failed", "searching"]:
+        if download.status not in ["downloading", "failed", "searching", "completed", "pending_review"]:
             return download
 
         username = download.slskd_username
