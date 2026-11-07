@@ -16,36 +16,51 @@ export default function SearchModal({ onClose, onAlbumAdded }: SearchModalProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const canDownload = Boolean(slskdStatus?.enabled && slskdStatus?.available);
 
+  // The parent re-renders on every status poll and hands us a new onClose each time.
+  // Keep the latest one in a ref so the setup effect below runs once, instead of
+  // re-focusing the input and refetching slskd status on every poll tick.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     inputRef.current?.focus();
     
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', handleEscape);
     getSlskdStatus().then(setSlskdStatus).catch(() => setSlskdStatus(null));
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     if (query.length < 2) {
       setResults([]);
+      setLoading(false);
       return;
     }
 
+    // MusicBrainz responses can arrive out of order. Once the query changes, the
+    // cleanup marks this run stale so its results are never applied.
+    let stale = false;
     const debounce = setTimeout(async () => {
       setLoading(true);
       try {
         const data = await searchMusicBrainz(query);
-        setResults(data);
+        if (!stale) setResults(data);
       } catch (error) {
         console.error('Search error:', error);
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     }, 400);
 
-    return () => clearTimeout(debounce);
+    return () => {
+      stale = true;
+      clearTimeout(debounce);
+    };
   }, [query]);
 
   const wishlistPayload = (result: MusicBrainzSearchResult) => ({

@@ -29,18 +29,26 @@ export default function AlbumsView({ onAlbumClick }: AlbumsViewProps) {
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
+  // Identifies the current search/sort. Responses for an older query (slow request
+  // finishing after a newer one) are dropped instead of overwriting the list.
+  const queryVersion = useRef(0);
+
   // Fetch initial albums or when search/sort changes
   useEffect(() => {
+    const version = ++queryVersion.current;
+
     const fetchAlbums = async () => {
       setLoading(true);
+      setLoadingMore(false);
       try {
         const data = await getAlbums(search, 0, ALBUMS_PER_PAGE, sort);
+        if (version !== queryVersion.current) return;
         setAlbums(data);
         setHasMore(data.length === ALBUMS_PER_PAGE);
       } catch (error) {
         console.error('Error fetching albums:', error);
       } finally {
-        setLoading(false);
+        if (version === queryVersion.current) setLoading(false);
       }
     };
 
@@ -52,15 +60,17 @@ export default function AlbumsView({ onAlbumClick }: AlbumsViewProps) {
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     
+    const version = queryVersion.current;
     setLoadingMore(true);
     try {
       const data = await getAlbums(search, albums.length, ALBUMS_PER_PAGE, sort);
+      if (version !== queryVersion.current) return;
       setAlbums(prev => [...prev, ...data]);
       setHasMore(data.length === ALBUMS_PER_PAGE);
     } catch (error) {
       console.error('Error loading more albums:', error);
     } finally {
-      setLoadingMore(false);
+      if (version === queryVersion.current) setLoadingMore(false);
     }
   }, [albums.length, hasMore, loadingMore, search, sort]);
 

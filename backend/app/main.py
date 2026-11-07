@@ -374,12 +374,18 @@ async def startup_event():
     # Start the scheduler
     asyncio.create_task(scheduled_scan_loop())
 
+    # Start the download progress monitor
+    recover_interrupted_downloads()
+    _download_monitor_stop.clear()
+    threading.Thread(target=download_monitor_loop, daemon=True, name="download-monitor-loop").start()
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Stop the scheduler on shutdown."""
     global _scheduler_running
     _scheduler_running = False
+    _download_monitor_stop.set()
 
 
 @app.get("/")
@@ -1451,6 +1457,81 @@ def run_move_download_in_background(download_id: int):
         db.close()
 
 
+# ---- Download progress monitor ----
+# Progress used to be advanced only when the browser polled GET /api/downloads/{id}, so
+# a download would sit there (and a slow tag lookup would block that request) until the
+# page was open and refreshed. The monitor advances downloads server-side instead; the
+# UI just reads the current state.
+_DOWNLOAD_MONITOR_INTERVAL_SECONDS = 3
+_download_monitor_stop = threading.Event()
+_download_monitor_inflight: set = set()
+_download_monitor_inflight_lock = threading.Lock()
+
+
+def _monitor_one_download(download_id: int):
+    db = SessionLocal()
+    try:
+        SlskdService(db).update_download_progress(download_id)
+    except Exception as e:
+        print(f"Download monitor error for {download_id}: {e}")
+    finally:
+        db.close()
+        with _download_monitor_inflight_lock:
+            _download_monitor_inflight.discard(download_id)
+
+
+def download_monitor_loop():
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Each worker may block for a while on tag matching, so use a few of them so one
+    # slow album doesn't hold up progress of the others.
+    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="download-monitor")
+    while not _download_monitor_stop.is_set():
+        try:
+            if slskd_config.is_configured():
+                db = SessionLocal()
+                try:
+                    ids = [
+                        row[0] for row in db.query(Download.id).filter(
+                            Download.status == "downloading",
+                            Download.slskd_username != None,
+                        ).all()
+                    ]
+                finally:
+                    db.close()
+
+                for download_id in ids:
+                    with _download_monitor_inflight_lock:
+                        if download_id in _download_monitor_inflight:
+                            continue
+                        _download_monitor_inflight.add(download_id)
+                    executor.submit(_monitor_one_download, download_id)
+        except Exception as e:
+            print(f"Download monitor loop error: {e}")
+        _download_monitor_stop.wait(_DOWNLOAD_MONITOR_INTERVAL_SECONDS)
+    executor.shutdown(wait=False)
+
+
+def recover_interrupted_downloads():
+    """
+    Tag matching runs in-process. If the server restarted mid-match, the download is
+    left in "matching" with nothing working on it. Put it back to "completed" so
+    Move to Library is available again.
+    """
+    db = SessionLocal()
+    try:
+        stuck = db.query(Download).filter(Download.status == "matching").all()
+        for download in stuck:
+            print(f"Recovering download {download.id} stuck in matching after restart")
+            download.status = "completed"
+        if stuck:
+            db.commit()
+    except Exception as e:
+        print(f"Download recovery error: {e}")
+    finally:
+        db.close()
+
+
 @app.get("/api/downloads/slskd-status", response_model=SlskdStatusResponse)
 def get_slskd_status(db: Session = Depends(get_db)):
     """Check if slskd integration is enabled and available."""
@@ -1582,9 +1663,8 @@ def start_download(
 
 @app.get("/api/downloads/{download_id}", response_model=DownloadResponse)
 def get_download(download_id: int, db: Session = Depends(get_db)):
-    """Get a specific download with updated progress."""
-    service = SlskdService(db)
-    download = service.update_download_progress(download_id)
+    """Get a specific download. Progress itself is advanced by the background monitor."""
+    download = db.query(Download).filter(Download.id == download_id).first()
     
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -1662,6 +1742,16 @@ def apply_download_match(
     
     if download.status not in ["completed", "pending_review"]:
         raise HTTPException(status_code=400, detail="Download must be completed or pending review")
+
+    from app.services.slskd import try_start_match, end_match
+    if not try_start_match(download_id):
+        return {"message": "Already applying match"}
+
+    # Flip to "matching" right away. Otherwise the status stays "pending_review" while
+    # beets runs, the UI sees nothing active and stops polling until a manual refresh.
+    download.status = "matching"
+    download.error_message = None
+    db.commit()
     
     # Run in background
     def apply_and_move():
@@ -1671,7 +1761,10 @@ def apply_download_match(
             from app.services.slskd import SlskdService
             service = SlskdService(db_session)
             service.apply_match_and_move(download_id, match_id, skip_tagging)
+        except Exception as e:
+            print(f"Apply match error: {e}")
         finally:
+            end_match(download_id)
             db_session.close()
     
     if background_tasks:
@@ -1792,15 +1885,9 @@ def run_ban_and_restart_after_ban(download_id: int, banned_username: str):
             download.slskd_username = banned_username
             db.commit()
 
-            try:
-                response = service.client.session.delete(
-                    f"{service.client.config.url}/api/v0/transfers/downloads/{banned_username}",
-                    timeout=10
-                )
-                if response.status_code in [200, 204]:
-                    print(f"slskd: Cancelled downloads from banned user {banned_username}")
-            except Exception as e:
-                print(f"slskd: Error cancelling download from banned user: {e}")
+            service._cancel_slskd_transfers(
+                download, all_for_user=True, username=banned_username
+            )
 
             service._cleanup_download_files(download)
 

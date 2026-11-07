@@ -1,6 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Download, SlskdStatus, BeetsCandidate } from '../types';
-import { getDownloads, getSlskdStatus, getDownload, moveDownload, retryDownload, cancelDownload, banUserAndRestartDownload, deleteDownload, getDownloadCandidates, applyDownloadMatch } from '../api';
+import { getDownloads, getSlskdStatus, moveDownload, retryDownload, cancelDownload, banUserAndRestartDownload, deleteDownload, getDownloadCandidates, applyDownloadMatch } from '../api';
+
+const ACTIVE_STATUSES: Download['status'][] = ['pending', 'searching', 'downloading', 'matching'];
+// Anything that can still be cancelled (everything that isn't moved / failed / cancelled).
+const CANCELLABLE_STATUSES: Download['status'][] = [...ACTIVE_STATUSES, 'completed', 'pending_review'];
 
 export default function DownloadsView() {
   const [downloads, setDownloads] = useState<Download[]>([]);
@@ -36,36 +40,45 @@ export default function DownloadsView() {
     fetchDownloads();
   }, [fetchSlskdStatus, fetchDownloads]);
 
-  // Auto-refresh active downloads
-  useEffect(() => {
-    const hasActiveDownloads = downloads.some(d => 
-      ['pending', 'searching', 'downloading', 'matching'].includes(d.status)
-    );
+  // Auto-refresh while anything is still in progress. The server advances downloads on
+  // its own; we only read the list. The interval depends on a boolean (not on the
+  // downloads array) so it is not torn down and recreated on every update, and a
+  // slow response can't pile up overlapping requests.
+  const hasActiveDownloads = downloads.some(d => ACTIVE_STATUSES.includes(d.status));
+  const pollInFlight = useRef(false);
+  // Bumped on every local change so a poll that started before it can't overwrite it.
+  const localVersion = useRef(0);
 
+  useEffect(() => {
     if (!hasActiveDownloads) return;
 
     const interval = setInterval(async () => {
-      const activeDownloads = downloads.filter(d => 
-        ['pending', 'searching', 'downloading', 'matching'].includes(d.status)
-      );
-
-      for (const download of activeDownloads) {
-        try {
-          const updated = await getDownload(download.id);
-          setDownloads(prev => prev.map(d => d.id === updated.id ? updated : d));
-        } catch (error) {
-          console.error('Error updating download:', error);
+      if (pollInFlight.current) return;
+      pollInFlight.current = true;
+      const versionAtStart = localVersion.current;
+      try {
+        const data = await getDownloads();
+        if (versionAtStart === localVersion.current) {
+          setDownloads(data);
         }
+      } catch (error) {
+        console.error('Error refreshing downloads:', error);
+      } finally {
+        pollInFlight.current = false;
       }
-    }, 3000);
+    }, 2000);
 
     return () => clearInterval(interval);
-  }, [downloads]);
+  }, [hasActiveDownloads]);
+
+  const applyLocalUpdate = (updated: Download) => {
+    localVersion.current += 1;
+    setDownloads(prev => prev.map(d => d.id === updated.id ? updated : d));
+  };
 
   const handleMove = async (downloadId: number) => {
     try {
-      const updated = await moveDownload(downloadId);
-      setDownloads(prev => prev.map(d => d.id === downloadId ? updated : d));
+      applyLocalUpdate(await moveDownload(downloadId));
     } catch (error) {
       console.error('Error moving download:', error);
     }
@@ -74,6 +87,7 @@ export default function DownloadsView() {
   const handleDelete = async (downloadId: number) => {
     try {
       await deleteDownload(downloadId);
+      localVersion.current += 1;
       setDownloads(prev => prev.filter(d => d.id !== downloadId));
     } catch (error) {
       console.error('Error deleting download:', error);
@@ -82,17 +96,23 @@ export default function DownloadsView() {
 
   const handleRetry = async (downloadId: number) => {
     try {
-      const updated = await retryDownload(downloadId);
-      setDownloads(prev => prev.map(d => d.id === downloadId ? updated : d));
+      applyLocalUpdate(await retryDownload(downloadId));
     } catch (error) {
       console.error('Error retrying download:', error);
     }
   };
 
-  const handleCancel = async (downloadId: number) => {
+  const handleCancel = async (download: Download) => {
+    // Once files are on disk, cancelling throws them away.
+    if (['completed', 'pending_review', 'matching'].includes(download.status)) {
+      const confirmed = window.confirm(
+        `Cancel "${download.album_title}"? The downloaded files will be deleted.`
+      );
+      if (!confirmed) return;
+    }
+
     try {
-      const updated = await cancelDownload(downloadId);
-      setDownloads(prev => prev.map(d => d.id === downloadId ? updated : d));
+      applyLocalUpdate(await cancelDownload(download.id));
     } catch (error) {
       console.error('Error cancelling download:', error);
     }
@@ -106,8 +126,7 @@ export default function DownloadsView() {
     if (!confirmed) return;
 
     try {
-      const updated = await banUserAndRestartDownload(download.id);
-      setDownloads(prev => prev.map(d => d.id === download.id ? updated : d));
+      applyLocalUpdate(await banUserAndRestartDownload(download.id));
     } catch (error) {
       console.error('Error banning user and restarting download:', error);
     }
@@ -136,8 +155,10 @@ export default function DownloadsView() {
       await applyDownloadMatch(reviewingDownload.id, matchId, skipTagging);
       setReviewingDownload(null);
       setCandidates([]);
-      // Refresh downloads after a short delay
-      setTimeout(fetchDownloads, 1000);
+      // The server flips the download to "matching" before responding, so refreshing
+      // now picks up the active state and the poll above carries it through to "moved".
+      localVersion.current += 1;
+      await fetchDownloads();
     } catch (error) {
       console.error('Error applying match:', error);
     } finally {
@@ -353,10 +374,10 @@ export default function DownloadsView() {
               </div>
 
               <div className="download-actions">
-                {['pending', 'searching', 'downloading'].includes(download.status) && (
+                {CANCELLABLE_STATUSES.includes(download.status) && (
                   <button 
                     className="btn btn-cancel"
-                    onClick={() => handleCancel(download.id)}
+                    onClick={() => handleCancel(download)}
                     title="Cancel download"
                   >
                     Cancel

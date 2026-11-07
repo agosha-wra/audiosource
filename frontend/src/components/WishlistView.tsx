@@ -6,6 +6,8 @@ import AlbumCard from './AlbumCard';
 interface WishlistViewProps {
   onAlbumClick: (albumId: number) => void;
   onOpenSearch: () => void;
+  // Bump to refetch the wishlist in place (keeps search / sort / filters intact).
+  refreshKey?: number;
 }
 
 const SORT_OPTIONS = [
@@ -21,7 +23,7 @@ function compareText(a: string, b: string) {
   return a.localeCompare(b, undefined, { sensitivity: 'base' });
 }
 
-export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistViewProps) {
+export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 0 }: WishlistViewProps) {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [slskdStatus, setSlskdStatus] = useState<SlskdStatus | null>(null);
@@ -39,21 +41,29 @@ export default function WishlistView({ onAlbumClick, onOpenSearch }: WishlistVie
     }
   }, []);
 
-  const fetchWishlist = async () => {
-    try {
-      const data = await getWishlist();
-      setAlbums(data);
-    } catch (error) {
-      console.error('Error fetching wishlist:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchWishlist();
     fetchSlskdStatus();
   }, [fetchSlskdStatus]);
+
+  // Initial load, and whenever the parent asks for a refresh. Only the album list is
+  // replaced; search text, sort and filters live in this component's state and are
+  // deliberately left alone.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await getWishlist();
+        if (!cancelled) setAlbums(data);
+      } catch (error) {
+        console.error('Error fetching wishlist:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   const handleRemove = async (e: React.MouseEvent, albumId: number) => {
     e.stopPropagation();

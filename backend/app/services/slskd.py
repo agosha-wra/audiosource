@@ -11,7 +11,7 @@ import threading
 import requests
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from sqlalchemy.orm import Session
 
 from app.models import Download, Album, Artist, BannedSlskdUser
@@ -160,12 +160,40 @@ class SlskdClient:
             print(f"slskd: Error getting search responses: {e}")
             return []
     
-    def wait_for_search(self, search_id: str, timeout: int = 45) -> List[Dict[str, Any]]:
+    def stop_search(self, search_id: str) -> None:
+        """Best-effort cancel of a running slskd search."""
+        try:
+            self.session.put(
+                f"{self.config.url}/api/v0/searches/{search_id}",
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+    def cancel_transfer(self, username: str, transfer_id: str) -> None:
+        """Cancel a transfer, then remove its record from slskd (best effort)."""
+        base = f"{self.config.url}/api/v0/transfers/downloads/{username}/{transfer_id}"
+        for params in ({}, {"remove": "true"}):
+            try:
+                self.session.delete(base, params=params, timeout=10)
+            except Exception as e:
+                print(f"slskd: Error cancelling transfer {transfer_id} from {username}: {e}")
+
+    def wait_for_search(
+        self,
+        search_id: str,
+        timeout: int = 45,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> List[Dict[str, Any]]:
         """Wait for a search to complete and return results."""
         start_time = time.time()
         min_wait = 10  # Wait at least 10 seconds for results
         
         while time.time() - start_time < timeout:
+            if should_cancel and should_cancel():
+                self.stop_search(search_id)
+                return []
+
             status = self.get_search_status(search_id)
             is_complete = status.get("isComplete", False)
             response_count = status.get("responseCount", 0)
@@ -182,6 +210,10 @@ class SlskdClient:
             
             time.sleep(2)
         
+        if should_cancel and should_cancel():
+            self.stop_search(search_id)
+            return []
+
         # Timeout - try to get whatever we have
         return self.get_search_responses(search_id)
     
@@ -301,6 +333,10 @@ class SlskdService:
         if not download:
             print(f"slskd: Download record {download_id} not found")
             return None
+
+        # Cancelled while waiting in the queue (e.g. behind another search).
+        if download.status == "cancelled":
+            return download
         
         # Get album info
         album = self.db.query(Album).filter(Album.id == download.album_id).first()
@@ -371,11 +407,21 @@ class SlskdService:
             all_candidates = []
             
             for query in search_queries:
+                if self._is_cancelled(download_id):
+                    return self._cancelled_result(download)
+
                 search_id = self.client.search(query)
                 if not search_id:
                     continue
                 
-                responses = self.client.wait_for_search(search_id, timeout=45)
+                responses = self.client.wait_for_search(
+                    search_id,
+                    timeout=45,
+                    should_cancel=lambda: self._is_cancelled(download_id),
+                )
+
+                if self._is_cancelled(download_id):
+                    return self._cancelled_result(download)
                 
                 for response in responses:
                     username = response.get("username", "")
@@ -406,6 +452,9 @@ class SlskdService:
                 if len(all_candidates) >= 5:
                     break
             
+            if self._is_cancelled(download_id):
+                return self._cancelled_result(download)
+
             if not all_candidates:
                 download.status = "failed"
                 download.error_message = "No suitable sources found"
@@ -442,7 +491,22 @@ class SlskdService:
                     f"{best.get('folder', 'unknown')} (score={best['score']}, {best['track_count']} tracks)"
                 )
                 
+                if self._is_cancelled(download_id):
+                    return self._cancelled_result(download)
+
                 if self.client.download_files(best["username"], best["files"]):
+                    if self._is_cancelled(download_id):
+                        # Cancelled while the transfer request was in flight: the
+                        # files are queued in slskd now, so tear them down again.
+                        self.db.refresh(download)
+                        download.slskd_username = best["username"]
+                        download.slskd_remote_folder = best.get("folder") or None
+                        self._cancel_slskd_transfers(download)
+                        download.slskd_username = None
+                        download.slskd_remote_folder = None
+                        self.db.commit()
+                        return self._cancelled_result(download)
+
                     download.status = "downloading"
                     download.slskd_username = best["username"]
                     download.slskd_remote_folder = best.get("folder") or None
@@ -459,11 +523,29 @@ class SlskdService:
             return download
             
         except Exception as e:
+            print(f"slskd: Error searching/downloading: {e}")
+            if self._is_cancelled(download_id):
+                return self._cancelled_result(download)
             download.status = "failed"
             download.error_message = str(e)
             self.db.commit()
-            print(f"slskd: Error searching/downloading: {e}")
             return download
+
+    def _is_cancelled(self, download_id: int) -> bool:
+        """Check the DB for a cancel request made by another session/request."""
+        try:
+            # Column query: always hits the DB (READ COMMITTED), never the identity map.
+            status = self.db.query(Download.status).filter(Download.id == download_id).scalar()
+        except Exception as e:
+            print(f"slskd: Error checking cancel state for download {download_id}: {e}")
+            return False
+        return status == "cancelled"
+
+    def _cancelled_result(self, download: Download) -> Download:
+        self.db.rollback()
+        self.db.refresh(download)
+        print(f"slskd: Download {download.id} was cancelled, stopping")
+        return download
     
     def _get_folder_path(self, filename: str) -> str:
         """Extract the folder path from a full file path."""
@@ -553,12 +635,23 @@ class SlskdService:
         else:
             score += min(num_tracks, 20)
         
-        # Match quality
+        # Match quality. Per-file bonuses are capped at the expected track count so a
+        # bloated deluxe folder (extra demos / live / bonus tracks) can't win just by
+        # having more files than the original album.
         both_matches = sum(1 for f in files if f.get("artist_match") and f.get("title_match"))
         artist_only = sum(1 for f in files if f.get("artist_match") and not f.get("title_match"))
+        if expected_tracks > 0:
+            both_matches = min(both_matches, expected_tracks)
+            artist_only = min(artist_only, max(expected_tracks - both_matches, 0))
         
         score += both_matches * 5
         score += artist_only * 3
+
+        # Folders with far more tracks than the original album are almost always
+        # expanded editions full of bonus material.
+        if expected_tracks > 0 and num_tracks > expected_tracks + 3:
+            extra = num_tracks - expected_tracks - 3
+            score -= min(extra * 3, 40)
         
         # File format bonus
         mp3_files = sum(1 for f in files if ".mp3" in f.get("filename", "").lower())
@@ -592,8 +685,71 @@ class SlskdService:
             # Heavy penalty - this folder has duplicates
             score -= 30 + (duplicate_patterns * 10)
             print(f"slskd:     Penalty for {duplicate_patterns} duplicate-pattern files")
+
+        # We want the original release, not deluxe / anniversary / expanded editions.
+        edition_penalty = self._edition_penalty(files, album_title)
+        if edition_penalty > 0:
+            print(f"slskd:     Penalty -{edition_penalty} for edition markers in folder name")
+            if score > 0:
+                # Keep these as a last-resort fallback instead of dropping them
+                # when the original isn't available.
+                return max(score - edition_penalty, 1)
+            return 0
         
         return max(score, 0)
+
+    # Words/phrases in a folder name that point to a non-original edition.
+    # Weight is the penalty applied per distinct marker (total is capped).
+    _EDITION_MARKERS: Dict[str, int] = {
+        "deluxe": 40,
+        "anniversary": 40,
+        "edition": 40,
+        "expanded": 40,
+        "bonus": 40,
+        "collector": 30,
+        "extended": 30,
+        "reissue": 25,
+        "re-issue": 25,
+        "remaster": 15,
+        "remastered": 15,
+    }
+    _EDITION_MARKER_RE = re.compile(
+        r"(?<![a-z0-9])(" + "|".join(re.escape(m) for m in sorted(_EDITION_MARKERS, key=len, reverse=True)) + r")s?(?![a-z0-9])"
+    )
+    # "10 year", "20 years", "10th", "25th" in a folder name (e.g. "10 Year Edition")
+    _EDITION_YEAR_RE = re.compile(r"(?<![a-z0-9])\d{1,2}\s*(?:years?|yrs?)(?![a-z0-9])|(?<![a-z0-9])\d{1,2}(?:st|nd|rd|th)(?![a-z0-9])")
+    _EDITION_MAX_PENALTY = 80
+
+    @classmethod
+    def _edition_markers_in(cls, text: str) -> set:
+        text = text.lower()
+        found = set(cls._EDITION_MARKER_RE.findall(text))
+        if cls._EDITION_YEAR_RE.search(text):
+            found.add("<n> year")
+        return found
+
+    def _edition_penalty(self, files: List[Dict], album_title: str) -> int:
+        """
+        Penalty for folders that look like deluxe/anniversary/etc. editions.
+        Markers that are part of the requested album title are ignored, so asking
+        for "Foo (Deluxe Edition)" still prefers deluxe folders.
+        """
+        if not files:
+            return 0
+
+        # Only look at the folder the files live in (plus its parent, which is often
+        # the album folder when files sit in a CD1/ subfolder) - not the whole path,
+        # which would pick up things like a user's "Deluxe Collection" share name.
+        folder = self._get_folder_path(files[0].get("filename", ""))
+        parts = [p for p in re.split(r"[/\\]+", folder) if p]
+        text = " / ".join(parts[-2:])
+
+        markers = self._edition_markers_in(text) - self._edition_markers_in(album_title)
+        if not markers:
+            return 0
+
+        penalty = sum(self._EDITION_MARKERS.get(m, 40) for m in markers)
+        return min(penalty, self._EDITION_MAX_PENALTY)
 
     _AUDIO_EXTENSIONS = (".mp3", ".m4a", ".ogg", ".flac", ".opus", ".wav")
 
@@ -819,6 +975,11 @@ class SlskdService:
                                 # InProgress, Queued, Initializing, Requested, etc.
                                 completed_bytes += bytes_transferred
                     
+                    # The user may have cancelled while we were talking to slskd /
+                    # walking the disk; don't resurrect or overwrite that.
+                    if self._is_cancelled(download.id):
+                        return self._cancelled_result(download)
+
                     # Update counts
                     if total_files > 0:
                         download.total_files = total_files
@@ -918,15 +1079,7 @@ class SlskdService:
 
         # Cancel active transfers from this user in slskd
         if download.status in ["searching", "downloading"]:
-            try:
-                response = self.client.session.delete(
-                    f"{self.client.config.url}/api/v0/transfers/downloads/{username}",
-                    timeout=10
-                )
-                if response.status_code in [200, 204]:
-                    print(f"slskd: Cancelled downloads from banned user {username}")
-            except Exception as e:
-                print(f"slskd: Error cancelling download from banned user: {e}")
+            self._cancel_slskd_transfers(download, all_for_user=True)
 
         self._cleanup_download_files(download)
 
@@ -945,36 +1098,78 @@ class SlskdService:
 
         return self.search_and_download_album(download_id)
     
+    # Every state a download can be in before it reaches a final one
+    # (moved / failed / cancelled).
+    CANCELLABLE_STATUSES = (
+        "pending", "searching", "downloading", "matching", "completed", "pending_review",
+    )
+
     def cancel_download(self, download_id: int) -> Optional[Download]:
-        """Cancel an active download."""
+        """
+        Cancel a download at any stage: queued, searching, downloading,
+        matching tags, or waiting for review / move.
+
+        The status flips to "cancelled" first so any worker thread still busy with
+        this download (search, tag matching) notices and stops instead of
+        overwriting the status afterwards.
+        """
         download = self.db.query(Download).filter(Download.id == download_id).first()
         if not download:
             return None
         
-        if download.status not in ["pending", "searching", "downloading"]:
+        if download.status not in self.CANCELLABLE_STATUSES:
             return download
-        
-        # Try to cancel in slskd if we have a username
-        if download.slskd_username:
-            try:
-                # Cancel all downloads from this user
-                response = self.client.session.delete(
-                    f"{self.client.config.url}/api/v0/transfers/downloads/{download.slskd_username}",
-                    timeout=10
-                )
-                if response.status_code in [200, 204]:
-                    print(f"slskd: Cancelled downloads from {download.slskd_username}")
-            except Exception as e:
-                print(f"slskd: Error cancelling download: {e}")
-        
+
         download.status = "cancelled"
         download.error_message = "Cancelled by user"
+        download.completed_at = None
+        download.beets_candidates = None
         self.db.commit()
+
+        # Stop only this download's transfers in slskd (the same peer may be serving
+        # other albums from our queue).
+        self._cancel_slskd_transfers(download)
         
         # Clean up any downloaded files
         self._cleanup_download_files(download)
         
         return download
+
+    def _cancel_slskd_transfers(
+        self,
+        download: Download,
+        all_for_user: bool = False,
+        username: Optional[str] = None,
+    ) -> int:
+        """
+        Cancel (and remove) the slskd transfers belonging to this download.
+        With all_for_user=True, every transfer from the peer is cancelled (used when banning).
+        Returns the number of transfers handled.
+        """
+        username = username or download.slskd_username
+        if not username:
+            return 0
+
+        handled = 0
+        try:
+            for entry in self.client.get_downloads():
+                if entry.get("username") != username:
+                    continue
+                for directory in entry.get("directories", []):
+                    if not all_for_user and not self._directory_matches_download(directory, download):
+                        continue
+                    for file_dl in directory.get("files", []):
+                        transfer_id = file_dl.get("id")
+                        if not transfer_id:
+                            continue
+                        self.client.cancel_transfer(username, transfer_id)
+                        handled += 1
+        except Exception as e:
+            print(f"slskd: Error cancelling transfers for download {download.id}: {e}")
+
+        if handled:
+            print(f"slskd: Cancelled {handled} transfer(s) from {username} for download {download.id}")
+        return handled
     
     def _cleanup_download_files(self, download: Download) -> int:
         """
@@ -1068,6 +1263,10 @@ class SlskdService:
             self.db.refresh(download)
             return download
 
+        if self._is_cancelled(download.id):
+            end_match(download.id)
+            return self._cancelled_result(download)
+
         download.status = "matching"
         self.db.commit()
         try:
@@ -1120,6 +1319,11 @@ class SlskdService:
             print(f"slskd: Download folder: {download_folder}")
             
             candidates = BeetsService.check_album_match(str(download_folder), str(music_dir))
+
+            # The lookup can take a while; the user may have cancelled meanwhile.
+            if self._is_cancelled(download_id):
+                self._cancelled_result(download)
+                return False
             
             if candidates:
                 best_match = candidates[0]
@@ -1133,6 +1337,10 @@ class SlskdService:
                         best_match.id,
                         str(music_dir)
                     )
+
+                    if self._is_cancelled(download_id):
+                        self._cancelled_result(download)
+                        return False
                     
                     if success:
                         download.beets_applied_match = json.dumps(applied_info or {
@@ -1163,6 +1371,9 @@ class SlskdService:
             
         except Exception as e:
             print(f"slskd: Error in move_completed_download: {e}")
+            if self._is_cancelled(download_id):
+                self._cancelled_result(download)
+                return False
             download.status = "pending_review"
             download.error_message = f"Failed to process download: {e}"
             self.db.commit()
@@ -1279,6 +1490,10 @@ class SlskdService:
     
     def _move_files_to_library(self, download: Download, source_folder: Path) -> bool:
         """Move audio files from source folder to music library."""
+        if self._is_cancelled(download.id):
+            self._cancelled_result(download)
+            return False
+
         music_dir = Path(get_settings().music_folder)
         
         artist_name = download.artist_name.replace("/", "_").replace("\\", "_")
@@ -1346,6 +1561,12 @@ class SlskdService:
             print(f"slskd: Moved {moved_count} files to {target_dir}")
             return True
         
+        # Nothing was moved. Don't leave the download parked in "matching"
+        # (spinner forever) - hand it back to the user.
+        print(f"slskd: No audio files moved from {source_folder} for download {download.id}")
+        download.status = "pending_review"
+        download.error_message = "No audio files could be moved to the library"
+        self.db.commit()
         return False
     
     def apply_match_and_move(self, download_id: int, match_id: Optional[str] = None, 
@@ -1365,13 +1586,25 @@ class SlskdService:
         if not download:
             return False
         
-        if download.status not in ["completed", "pending_review"]:
+        # "matching" is what the API sets before handing us over (so the UI shows
+        # progress right away instead of looking idle until the next refresh).
+        if download.status not in ["completed", "pending_review", "matching"]:
             return False
+
+        def hand_back_for_review(message: str) -> None:
+            """Never leave the download stuck in "matching" after a failure."""
+            self.db.rollback()
+            self.db.refresh(download)
+            if download.status == "matching":
+                download.status = "pending_review"
+                download.error_message = message
+                self.db.commit()
         
         try:
             download_folder = self._find_download_folder(download)
             if not download_folder:
                 print(f"slskd: Could not find download folder for apply_match_and_move")
+                hand_back_for_review("Could not locate downloaded files on disk")
                 return False
             
             music_dir = Path(get_settings().music_folder)
@@ -1381,6 +1614,10 @@ class SlskdService:
             if not skip_tagging:
                 print(f"slskd: Applying beets tags for {download.artist_name} - {download.album_title}")
                 success, applied_info = BeetsService.apply_tags(str(download_folder), match_id, str(music_dir))
+
+                if self._is_cancelled(download_id):
+                    self._cancelled_result(download)
+                    return False
                 
                 # Store the applied match info
                 if applied_info:
@@ -1403,8 +1640,10 @@ class SlskdService:
             
         except Exception as e:
             print(f"slskd: Error in apply_match_and_move: {e}")
-            download.error_message = f"Failed to apply match: {e}"
-            self.db.commit()
+            if self._is_cancelled(download_id):
+                self._cancelled_result(download)
+                return False
+            hand_back_for_review(f"Failed to apply match: {e}")
             return False
     
     def get_all_downloads(self) -> List[Download]:

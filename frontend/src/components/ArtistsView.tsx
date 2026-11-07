@@ -57,12 +57,32 @@ export default function ArtistsView({
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
-  // Load artists if not already loaded or when sort changes
+  // The text box is driven by local state so typing is instant; the (expensive) query is
+  // only sent once typing pauses. The committed value lives in App so it survives
+  // navigation.
+  const [searchInput, setSearchInput] = useState(search);
   useEffect(() => {
-    if (!loaded) {
-      setLoading(true);
-      loadArtists().finally(() => setLoading(false));
+    if (searchInput === search) return;
+    const timer = setTimeout(() => onSearchChange(searchInput), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput, search, onSearchChange]);
+
+  // Load artists if not already loaded or when sort/search changes
+  useEffect(() => {
+    if (loaded) {
+      setLoading(false);
+      return;
     }
+    // loadArtists identity changes with sort/search; a superseded load must not flip the
+    // spinner off while the newer one is still running.
+    let superseded = false;
+    setLoading(true);
+    loadArtists().finally(() => {
+      if (!superseded) setLoading(false);
+    });
+    return () => {
+      superseded = true;
+    };
   }, [loaded, loadArtists]);
   
   // Restore scroll position when returning to the list
@@ -184,8 +204,8 @@ export default function ArtistsView({
             <input
               type="text"
               placeholder="Search artists..."
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
           <div className="header-controls-toolbar">

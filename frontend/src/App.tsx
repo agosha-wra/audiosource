@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { View, Stats, ScanStatus, UpcomingStatus, Artist } from './types';
 import { getStats, getScanStatus, startScan, cancelScan, checkUpcomingReleases, cancelUpcomingCheck, getUpcomingStatus, getArtists } from './api';
 import Sidebar from './components/Sidebar';
@@ -266,10 +266,17 @@ function App() {
     updateURL('artist-detail', artistId);
   };
   
+  // Every artists request is tagged with the version current when it started. When the
+  // search/sort changes (or a newer load starts) the version moves on, and a slower
+  // response for the old query is discarded rather than replacing the new results.
+  const artistsRequestVersion = useRef(0);
+
   // Load artists (initial or when sort/search changes)
   const loadArtists = useCallback(async () => {
+    const version = ++artistsRequestVersion.current;
     try {
       const data = await getArtists(0, 100, artistsSort, artistsSearch);
+      if (version !== artistsRequestVersion.current) return;
       setArtists(data);
       setArtistsHasMore(data.length === 100);
       setArtistsLoaded(true);
@@ -280,8 +287,10 @@ function App() {
   
   // Load more artists for infinite scroll
   const loadMoreArtists = useCallback(async () => {
+    const version = artistsRequestVersion.current;
     try {
       const data = await getArtists(artists.length, 100, artistsSort, artistsSearch);
+      if (version !== artistsRequestVersion.current) return;
       setArtists(prev => [...prev, ...data]);
       setArtistsHasMore(data.length === 100);
     } catch (error) {
@@ -291,12 +300,14 @@ function App() {
   
   // Handle artist sort change
   const handleArtistsSortChange = useCallback((newSort: string) => {
+    artistsRequestVersion.current += 1; // invalidate in-flight requests for the old sort
     setArtistsSort(newSort);
     setArtistsLoaded(false); // Force reload
   }, []);
   
   // Handle artist search change
   const handleArtistsSearchChange = useCallback((newSearch: string) => {
+    artistsRequestVersion.current += 1; // invalidate in-flight requests for the old search
     setArtistsSearch(newSearch);
     setArtistsLoaded(false); // Force reload
   }, []);
@@ -420,7 +431,7 @@ function App() {
 
         {currentView === 'wishlist' && (
           <WishlistView 
-            key={wishlistKey}
+            refreshKey={wishlistKey}
             onAlbumClick={handleAlbumClick}
             onOpenSearch={handleOpenSearch}
           />
