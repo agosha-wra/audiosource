@@ -203,6 +203,12 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
   const selectableAlbums = displayedAlbums.filter(isSelectable);
   const allSelectableSelected =
     selectableAlbums.length > 0 && selectableAlbums.every(a => selectedIds.has(a.id));
+  // "Select all Discogs" picks exactly the Discogs-tagged ones (replacing the selection).
+  const selectableDiscogs = selectableAlbums.filter(a => a.from_discogs);
+  const allDiscogsSelected =
+    selectableDiscogs.length > 0 &&
+    selectedIds.size === selectableDiscogs.length &&
+    selectableDiscogs.every(a => selectedIds.has(a.id));
 
   return (
     <>
@@ -296,6 +302,19 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
               >
                 <span>{allSelectableSelected ? 'Clear selection' : `Select all (${selectableAlbums.length})`}</span>
               </button>
+              {selectableDiscogs.length > 0 && (
+                <button
+                  className="secondary-btn"
+                  onClick={() =>
+                    setSelectedIds(allDiscogsSelected ? new Set() : new Set(selectableDiscogs.map(a => a.id)))
+                  }
+                  title="Select every Discogs-tagged album currently shown (upcoming ones excluded)"
+                >
+                  <span>
+                    {allDiscogsSelected ? 'Clear selection' : `Select all Discogs (${selectableDiscogs.length})`}
+                  </span>
+                </button>
+              )}
               <button
                 className="search-albums-btn"
                 onClick={handleQueueSelected}
