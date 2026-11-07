@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Download, SlskdStatus, BeetsCandidate } from '../types';
-import { getDownloads, getSlskdStatus, moveDownload, retryDownload, cancelDownload, banUserAndRestartDownload, deleteDownload, getDownloadCandidates, applyDownloadMatch } from '../api';
+import type { Download, SlskdStatus, BeetsCandidate, DownloadQueueStatus } from '../types';
+import { getDownloads, getSlskdStatus, getDownloadQueueStatus, moveDownload, retryDownload, cancelDownload, banUserAndRestartDownload, deleteDownload, getDownloadCandidates, applyDownloadMatch } from '../api';
 
-const ACTIVE_STATUSES: Download['status'][] = ['pending', 'searching', 'downloading', 'matching'];
+const ACTIVE_STATUSES: Download['status'][] = ['queued', 'pending', 'searching', 'downloading', 'matching'];
 // Anything that can still be cancelled (everything that isn't moved / failed / cancelled).
 const CANCELLABLE_STATUSES: Download['status'][] = [...ACTIVE_STATUSES, 'completed', 'pending_review'];
 
@@ -49,6 +49,17 @@ export default function DownloadsView() {
   // Bumped on every local change so a poll that started before it can't overwrite it.
   const localVersion = useRef(0);
 
+  const [queueStatus, setQueueStatus] = useState<DownloadQueueStatus | null>(null);
+  const queuedCount = downloads.filter(d => d.status === 'queued').length;
+
+  useEffect(() => {
+    if (queuedCount === 0) {
+      setQueueStatus(null);
+      return;
+    }
+    getDownloadQueueStatus().then(setQueueStatus).catch(() => undefined);
+  }, [queuedCount]);
+
   useEffect(() => {
     if (!hasActiveDownloads) return;
 
@@ -57,7 +68,11 @@ export default function DownloadsView() {
       pollInFlight.current = true;
       const versionAtStart = localVersion.current;
       try {
-        const data = await getDownloads();
+        const [data, queue] = await Promise.all([
+          getDownloads(),
+          getDownloadQueueStatus().catch(() => null),
+        ]);
+        if (queue) setQueueStatus(queue);
         if (versionAtStart === localVersion.current) {
           setDownloads(data);
         }
@@ -173,6 +188,8 @@ export default function DownloadsView() {
 
   const getStatusColor = (status: Download['status']) => {
     switch (status) {
+      case 'queued':
+        return 'var(--text-secondary)';
       case 'pending':
       case 'searching':
       case 'matching':
@@ -196,6 +213,8 @@ export default function DownloadsView() {
 
   const getStatusLabel = (status: Download['status']) => {
     switch (status) {
+      case 'queued':
+        return 'Queued';
       case 'pending':
         return 'Pending';
       case 'searching':
@@ -226,6 +245,19 @@ export default function DownloadsView() {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
+
+  const formatCountdown = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Queue order is creation order on the server (oldest id first).
+  const queuePosition = (downloadId: number) =>
+    downloads
+      .filter(d => d.status === 'queued')
+      .sort((a, b) => a.id - b.id)
+      .findIndex(d => d.id === downloadId) + 1;
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -277,6 +309,19 @@ export default function DownloadsView() {
         </div>
       )}
 
+      {queuedCount > 0 && (
+        <div className="queue-banner">
+          <strong>{queuedCount} album{queuedCount === 1 ? '' : 's'} queued</strong>
+          <span>
+            One download starts every {Math.round((queueStatus?.interval_seconds ?? 120) / 60)} minutes to avoid a Soulseek ban.
+            {' '}
+            {queueStatus && queueStatus.seconds_until_next > 0
+              ? `Next starts in ${formatCountdown(queueStatus.seconds_until_next)}.`
+              : 'Next starts shortly.'}
+          </span>
+        </div>
+      )}
+
       {downloads.length === 0 ? (
         <div className="empty-state">
           <p>No downloads yet.</p>
@@ -299,6 +344,10 @@ export default function DownloadsView() {
                   >
                     {getStatusLabel(download.status)}
                   </span>
+
+                  {download.status === 'queued' && (
+                    <span className="download-files">#{queuePosition(download.id)} in queue</span>
+                  )}
                   
                   {download.slskd_username && (
                     <span className="download-source">from {download.slskd_username}</span>
@@ -567,6 +616,23 @@ export default function DownloadsView() {
           width: 12px;
           height: 12px;
           border-radius: 50%;
+        }
+
+        .queue-banner {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          padding: 14px 18px;
+          margin-bottom: 20px;
+          background: var(--bg-tertiary);
+          border-left: 4px solid var(--accent-blue);
+          border-radius: 8px;
+          font-size: 14px;
+        }
+
+        .queue-banner span {
+          color: var(--text-secondary);
+          font-size: 13px;
         }
 
         .slskd-notice {

@@ -12,9 +12,10 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Callable
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import Download, Album, Artist, BannedSlskdUser
+from app.models import Download, Album, Artist, BannedSlskdUser, DownloadQueueState
 from app.config import get_settings
 from app.services.beets_service import BeetsService
 
@@ -37,6 +38,13 @@ slskd_config = SlskdConfig()
 
 # Minimum beets match confidence (%) to auto-tag and move into the library.
 AUTO_MOVE_CONFIDENCE_THRESHOLD = 80.0
+
+# Soulseek bans clients that look like they are flooding the network, so the batch
+# queue only starts one album's search per this many seconds. This is a hard floor:
+# the queue clock is persisted in the DB and stamped by *every* search (manual
+# downloads, retries, ban-and-restart too), so none of them can be stacked on top of
+# a queue release.
+BATCH_DOWNLOAD_INTERVAL_SECONDS = 120
 
 # One MusicBrainz/beets lookup per download. Overlapping progress polls used to
 # see status "completed" and show Move to Library while the lookup was still running.
@@ -380,6 +388,9 @@ class SlskdService:
         # Check if it's a self-titled album
         is_self_titled = artist_name.lower().strip() == album_title.lower().strip()
         
+        # Record that we're about to hit Soulseek (keeps the queue spacing honest).
+        self.mark_search_started()
+
         # Update download to searching status
         download.status = "searching"
         download.artist_name = artist_name
@@ -1101,7 +1112,7 @@ class SlskdService:
     # Every state a download can be in before it reaches a final one
     # (moved / failed / cancelled).
     CANCELLABLE_STATUSES = (
-        "pending", "searching", "downloading", "matching", "completed", "pending_review",
+        "queued", "pending", "searching", "downloading", "matching", "completed", "pending_review",
     )
 
     def cancel_download(self, download_id: int) -> Optional[Download]:
@@ -1231,7 +1242,7 @@ class SlskdService:
         # Downloading status means slskd is actively working on it
         stuck_downloads = self.db.query(Download).filter(
             Download.status.in_(["pending", "searching"]),
-            Download.created_at < timeout_threshold
+            func.coalesce(Download.released_at, Download.created_at) < timeout_threshold
         ).all()
         
         cancelled_count = 0
@@ -1655,4 +1666,149 @@ class SlskdService:
         return self.db.query(Download).filter(
             Download.status.in_(["searching", "downloading"])
         ).all()
+
+    # ------------------------------------------------------------------
+    # Batch queue
+    #
+    # Albums sit in status "queued". A single loop (see main.py) calls
+    # release_next_queued() every few seconds; it hands out at most one album per
+    # BATCH_DOWNLOAD_INTERVAL_SECONDS and never while another search is still running.
+    # ------------------------------------------------------------------
+
+    def _get_queue_state(self) -> DownloadQueueState:
+        state = self.db.query(DownloadQueueState).filter(DownloadQueueState.id == 1).first()
+        if state is None:
+            try:
+                state = DownloadQueueState(id=1)
+                self.db.add(state)
+                self.db.commit()
+            except Exception:
+                # Another thread created it first.
+                self.db.rollback()
+                state = self.db.query(DownloadQueueState).filter(DownloadQueueState.id == 1).first()
+        return state
+
+    def mark_search_started(self) -> None:
+        """Stamp the queue clock: a Soulseek search is starting right now."""
+        try:
+            state = self._get_queue_state()
+            state.last_search_started_at = datetime.utcnow()
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            print(f"slskd: Could not update queue clock: {e}")
+
+    def seconds_until_next_release(self) -> int:
+        """Seconds before the queue is allowed to start another search (0 = allowed now)."""
+        state = self._get_queue_state()
+        last = state.last_search_started_at if state else None
+        if last is None:
+            return 0
+        elapsed = (datetime.utcnow() - last).total_seconds()
+        return max(0, int(BATCH_DOWNLOAD_INTERVAL_SECONDS - elapsed + 0.999))
+
+    def count_queued(self) -> int:
+        return self.db.query(Download).filter(Download.status == "queued").count()
+
+    def queue_albums(self, album_ids: List[int]) -> Dict[str, Any]:
+        """
+        Put wishlisted albums in the queue (status "queued"). Albums that are already
+        owned or already have an in-flight download are skipped, not duplicated.
+        """
+        in_flight = ["queued", "pending", "searching", "downloading", "matching",
+                     "completed", "pending_review"]
+        queued = 0
+        skipped_reasons: List[str] = []
+        seen: set = set()
+
+        for album_id in album_ids:
+            if album_id in seen:
+                continue
+            seen.add(album_id)
+
+            album = self.db.query(Album).filter(Album.id == album_id).first()
+            if not album:
+                skipped_reasons.append(f"Album {album_id} not found")
+                continue
+
+            artist_name = album.artist.name if album.artist else "Unknown Artist"
+            label = f"{artist_name} - {album.title}"
+
+            if album.is_owned:
+                skipped_reasons.append(f"{label}: already in your library")
+                continue
+
+            existing = self.db.query(Download).filter(
+                Download.album_id == album_id,
+                Download.status.in_(in_flight),
+            ).first()
+            if existing:
+                skipped_reasons.append(f"{label}: already queued or downloading")
+                continue
+
+            self.db.add(Download(
+                album_id=album_id,
+                artist_name=artist_name,
+                album_title=album.title,
+                status="queued",
+            ))
+            queued += 1
+
+        self.db.commit()
+        return {"queued": queued, "skipped_reasons": skipped_reasons}
+
+    def release_next_queued(self) -> Optional[int]:
+        """
+        Start the next queued album if (and only if) it is allowed right now:
+          - the spacing since the last Soulseek search has elapsed,
+          - no other download is still searching / waiting to search,
+          - slskd is reachable.
+        Returns the download id that was released, or None.
+        """
+        if self.count_queued() == 0:
+            return None
+
+        if self.seconds_until_next_release() > 0:
+            return None
+
+        busy = self.db.query(Download).filter(
+            Download.status.in_(["pending", "searching"])
+        ).count()
+        if busy:
+            return None
+
+        if not self.client.is_available():
+            return None
+
+        nxt = (
+            self.db.query(Download.id)
+            .filter(Download.status == "queued")
+            .order_by(Download.id.asc())
+            .first()
+        )
+        if not nxt:
+            return None
+        download_id = nxt[0]
+
+        # Claim atomically: if the user cancelled it in the meantime the UPDATE
+        # matches nothing and we leave it alone.
+        now = datetime.utcnow()
+        claimed = self.db.query(Download).filter(
+            Download.id == download_id,
+            Download.status == "queued",
+        ).update(
+            {"status": "pending", "released_at": now, "error_message": None},
+            synchronize_session=False,
+        )
+        if not claimed:
+            self.db.rollback()
+            return None
+
+        # Reserve the slot now, in the same commit, so the next tick can't release
+        # another album while this one's worker thread is still starting up.
+        state = self._get_queue_state()
+        state.last_search_started_at = now
+        self.db.commit()
+        print(f"slskd: Queue released download {download_id}")
+        return download_id
 

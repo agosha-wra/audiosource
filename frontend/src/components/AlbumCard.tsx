@@ -86,6 +86,9 @@ export default function AlbumCard({
         <div className="album-meta">
           {album.release_date && <span>{album.release_date.substring(0, 4)}</span>}
           {album.release_type && <span>{album.release_type}</span>}
+          {album.from_discogs && isWishlisted && (
+            <span className="discogs-tag" title="In your Discogs collection">Discogs</span>
+          )}
           {showScore && album.critic_score !== null && album.critic_score !== undefined && (
             <span 
               className={`critic-score ${album.critic_score >= 80 ? 'high' : album.critic_score >= 60 ? 'medium' : 'low'} ${album.aoty_url ? 'has-link' : ''}`}

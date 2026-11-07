@@ -1,4 +1,5 @@
 import musicbrainzngs
+import threading
 import time
 import requests
 from datetime import datetime, date
@@ -21,14 +22,19 @@ class MusicBrainzService:
     # Rate limiting: MusicBrainz allows 1 request per second
     _last_request_time: float = 0
     _min_request_interval: float = 1.1  # Slightly more than 1 second
+    # Several background jobs (scanner, enrichment, imports) share this limiter from
+    # different threads; without the lock two of them could pass the check together and
+    # send requests back to back.
+    _rate_lock = threading.Lock()
 
     @classmethod
     def _rate_limit(cls):
         """Ensure we don't exceed rate limits."""
-        elapsed = time.time() - cls._last_request_time
-        if elapsed < cls._min_request_interval:
-            time.sleep(cls._min_request_interval - elapsed)
-        cls._last_request_time = time.time()
+        with cls._rate_lock:
+            elapsed = time.time() - cls._last_request_time
+            if elapsed < cls._min_request_interval:
+                time.sleep(cls._min_request_interval - elapsed)
+            cls._last_request_time = time.time()
 
     @classmethod
     def search_release(

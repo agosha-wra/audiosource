@@ -27,6 +27,11 @@ from app.schemas import (
     DownloadResponse,
     SlskdStatusResponse,
     BannedSlskdUserResponse,
+    BatchDownloadRequest,
+    BatchDownloadResponse,
+    DiscogsImportRequest,
+    DiscogsImportStatusResponse,
+    DownloadQueueStatusResponse,
     MetadataMatchCandidate,
     ApplyMetadataRequest,
     AppSettingsResponse,
@@ -38,6 +43,7 @@ from app.config import get_settings
 from difflib import SequenceMatcher
 from app.services.scanner import ScannerService
 from app.services.musicbrainz import MusicBrainzService
+from app.services import discogs_import
 from app.services.upcoming import UpcomingReleasesService
 from app.services.aoty import AOTYService
 
@@ -75,6 +81,13 @@ def run_migrations():
         except Exception as e:
             print(f"Migration check failed (may be normal on first run): {e}")
 
+        # released_at: when a download left the batch queue / was restarted
+        try:
+            conn.execute(text("ALTER TABLE downloads ADD COLUMN IF NOT EXISTS released_at TIMESTAMP"))
+            conn.commit()
+        except Exception as e:
+            print(f"Migration check failed (may be normal on first run): {e}")
+
         for col in ("slskd_remote_folder", "local_folder_path"):
             try:
                 result = conn.execute(text(
@@ -93,7 +106,7 @@ run_migrations()
 app = FastAPI(
     title="AudioSource",
     description="A music library management application",
-    version="0.1.0",
+    version="2.0.8",
 )
 
 # CORS middleware for frontend
@@ -332,6 +345,8 @@ async def startup_event():
             # Add AOTY columns to albums
             conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS critic_score INTEGER"))
             conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS aoty_url TEXT"))
+            # Discogs tag (set by the Discogs collection import)
+            conn.execute(text("ALTER TABLE albums ADD COLUMN IF NOT EXISTS from_discogs BOOLEAN DEFAULT FALSE"))
             # Create AOTY enrichment status table if needed
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS aoty_enrichment_status (
@@ -378,6 +393,7 @@ async def startup_event():
     recover_interrupted_downloads()
     _download_monitor_stop.clear()
     threading.Thread(target=download_monitor_loop, daemon=True, name="download-monitor-loop").start()
+    threading.Thread(target=download_queue_loop, daemon=True, name="download-queue-loop").start()
 
 
 @app.on_event("shutdown")
@@ -391,7 +407,7 @@ async def shutdown_event():
 @app.get("/")
 def root():
     """Root endpoint."""
-    return {"message": "AudioSource API", "version": "0.1.0"}
+    return {"message": "AudioSource API", "version": "2.0.8"}
 
 
 @app.get("/api/albums", response_model=List[AlbumResponse])
@@ -986,6 +1002,38 @@ def add_to_wishlist(request: WishlistAddRequest, db: Session = Depends(get_db)):
     return album
 
 
+# ============ Discogs Import ============
+
+@app.post("/api/import/discogs", response_model=DiscogsImportStatusResponse)
+def import_discogs_collection(request: DiscogsImportRequest):
+    """
+    Import a Discogs collection CSV export: every album not already in the library or
+    wishlist is added to the wishlist. Runs in the background (MusicBrainz is rate
+    limited, so hundreds of albums take minutes) - poll GET /api/import/discogs/status.
+    """
+    try:
+        rows = discogs_import.parse_discogs_csv(request.content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not rows:
+        raise HTTPException(status_code=400, detail="No albums found in this file.")
+
+    try:
+        return discogs_import.start_import(rows, request.filename)
+    except discogs_import.ImportAlreadyRunning:
+        raise HTTPException(status_code=409, detail="A Discogs import is already running.")
+
+
+@app.get("/api/import/discogs/status", response_model=DiscogsImportStatusResponse)
+def get_discogs_import_status():
+    return discogs_import.get_status()
+
+
+@app.post("/api/import/discogs/cancel")
+def cancel_discogs_import():
+    return {"cancelling": discogs_import.request_cancel()}
+
+
 @app.delete("/api/wishlist/{album_id}")
 def remove_from_wishlist(album_id: int, db: Session = Depends(get_db)):
     """Remove an album from the wishlist. Cleans up orphaned artists."""
@@ -1415,7 +1463,7 @@ def enrich_artist_aoty(
 
 # ============ Downloads (slskd Integration) ============
 
-from app.services.slskd import SlskdService, slskd_config
+from app.services.slskd import SlskdService, slskd_config, BATCH_DOWNLOAD_INTERVAL_SECONDS
 
 # Background task lock for downloads
 _download_lock = threading.Lock()
@@ -1512,6 +1560,38 @@ def download_monitor_loop():
     executor.shutdown(wait=False)
 
 
+_DOWNLOAD_QUEUE_TICK_SECONDS = 5
+
+
+def download_queue_loop():
+    """
+    Feeds the batch queue to Soulseek, one album at a time.
+
+    This loop only *asks* the service whether a release is allowed; the actual rate limit
+    (BATCH_DOWNLOAD_INTERVAL_SECONDS between searches, nothing else mid-search) lives in
+    SlskdService.release_next_queued() and is backed by a persisted clock.
+    """
+    while not _download_monitor_stop.is_set():
+        try:
+            if slskd_config.is_configured():
+                db = SessionLocal()
+                try:
+                    download_id = SlskdService(db).release_next_queued()
+                finally:
+                    db.close()
+
+                if download_id is not None:
+                    threading.Thread(
+                        target=run_download_in_background,
+                        args=(download_id,),
+                        daemon=True,
+                        name=f"queued-download-{download_id}",
+                    ).start()
+        except Exception as e:
+            print(f"Download queue loop error: {e}")
+        _download_monitor_stop.wait(_DOWNLOAD_QUEUE_TICK_SECONDS)
+
+
 def recover_interrupted_downloads():
     """
     Tag matching runs in-process. If the server restarted mid-match, the download is
@@ -1557,6 +1637,41 @@ def unban_user(username: str, db: Session = Depends(get_db)):
     if not service.unban_username(username):
         raise HTTPException(status_code=404, detail="User is not on the banlist")
     return {"message": f"Unbanned {username}"}
+
+
+@app.post("/api/downloads/batch", response_model=BatchDownloadResponse)
+def start_batch_download(request: BatchDownloadRequest, db: Session = Depends(get_db)):
+    """
+    Queue several wishlisted albums. They are NOT started now: the queue starts one
+    album every BATCH_DOWNLOAD_INTERVAL_SECONDS (Soulseek bans clients that flood it).
+    """
+    if not slskd_config.is_configured():
+        raise HTTPException(status_code=400, detail="slskd integration is not configured")
+    if not request.album_ids:
+        raise HTTPException(status_code=400, detail="No albums selected")
+
+    service = SlskdService(db)
+    if not service.is_available():
+        raise HTTPException(status_code=503, detail="slskd is not available")
+
+    result = service.queue_albums(request.album_ids)
+    return BatchDownloadResponse(
+        queued=result["queued"],
+        skipped=len(result["skipped_reasons"]),
+        interval_seconds=BATCH_DOWNLOAD_INTERVAL_SECONDS,
+        skipped_reasons=result["skipped_reasons"],
+    )
+
+
+@app.get("/api/downloads/queue-status", response_model=DownloadQueueStatusResponse)
+def get_download_queue_status(db: Session = Depends(get_db)):
+    """How many albums are waiting and when the next one may start."""
+    service = SlskdService(db)
+    return DownloadQueueStatusResponse(
+        queued_count=service.count_queued(),
+        interval_seconds=BATCH_DOWNLOAD_INTERVAL_SECONDS,
+        seconds_until_next=service.seconds_until_next_release(),
+    )
 
 
 def _build_download_response(download: Download) -> DownloadResponse:
@@ -1638,7 +1753,7 @@ def start_download(
     # Check if already downloading this album
     existing = db.query(Download).filter(
         Download.album_id == album_id,
-        Download.status.in_(["pending", "searching", "downloading"])
+        Download.status.in_(["queued", "pending", "searching", "downloading"])
     ).first()
     if existing:
         raise HTTPException(status_code=409, detail="Album is already being downloaded")
@@ -1810,6 +1925,7 @@ def retry_download(
     download.completed_files = 0
     download.completed_bytes = 0
     download.slskd_username = None
+    download.released_at = datetime.utcnow()
     db.commit()
     db.refresh(download)
     
@@ -1859,6 +1975,7 @@ def ban_user_and_restart_download(
     download.completed_at = None
     download.beets_candidates = None
     download.beets_applied_match = None
+    download.released_at = datetime.utcnow()
     db.commit()
     db.refresh(download)
 

@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Album, SlskdStatus } from '../types';
-import { getWishlist, removeFromWishlist, getSlskdStatus, startDownload } from '../api';
+import { getWishlist, removeFromWishlist, getSlskdStatus, startDownload, startBatchDownload } from '../api';
 import AlbumCard from './AlbumCard';
+
+// Mirrors BATCH_DOWNLOAD_INTERVAL_SECONDS on the server. Only used for wording; the
+// server is what actually enforces the spacing.
+const BATCH_INTERVAL_MINUTES = 2;
 
 interface WishlistViewProps {
   onAlbumClick: (albumId: number) => void;
@@ -29,8 +33,13 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
   const [slskdStatus, setSlskdStatus] = useState<SlskdStatus | null>(null);
   const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
   const [hideUpcoming, setHideUpcoming] = useState(false);
+  const [discogsOnly, setDiscogsOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<WishlistSort>('date_added');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [queueing, setQueueing] = useState(false);
+  const [batchMessage, setBatchMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
   const fetchSlskdStatus = useCallback(async () => {
     try {
@@ -94,6 +103,58 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
     }
   };
 
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (albumId: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(albumId)) next.delete(albumId);
+      else next.add(albumId);
+      return next;
+    });
+  };
+
+  const handleQueueSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0 || queueing) return;
+
+    const totalMinutes = (ids.length - 1) * BATCH_INTERVAL_MINUTES;
+    const confirmed = window.confirm(
+      `Queue ${ids.length} album${ids.length > 1 ? 's' : ''} for download?\n\n` +
+      `One download starts every ${BATCH_INTERVAL_MINUTES} minutes (Soulseek bans clients that ` +
+      `search too fast), so the last one starts in about ${totalMinutes} min.`
+    );
+    if (!confirmed) return;
+
+    setQueueing(true);
+    setBatchMessage(null);
+    try {
+      const result = await startBatchDownload(ids);
+      const everyMin = Math.round(result.interval_seconds / 60);
+      let text = `${result.queued} album${result.queued === 1 ? '' : 's'} queued - one starts every ${everyMin} min. Follow progress in Downloads.`;
+      if (result.skipped > 0) {
+        text += ` Skipped ${result.skipped}: ${result.skipped_reasons.join('; ')}`;
+      }
+      setBatchMessage({ text, isError: result.queued === 0 });
+      if (result.queued > 0) {
+        setDownloadingIds(prev => {
+          const next = new Set(prev);
+          ids.forEach(id => next.add(id));
+          return next;
+        });
+      }
+      exitSelectMode();
+    } catch (error) {
+      console.error('Error queueing batch download:', error);
+      setBatchMessage({ text: 'Could not queue the downloads. Is slskd reachable?', isError: true });
+    } finally {
+      setQueueing(false);
+    }
+  };
+
   // Check if album is upcoming (future release date)
   // Only works with ISO format dates (YYYY-MM-DD)
   const isUpcoming = (album: Album) => {
@@ -107,7 +168,9 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
   const canDownload = slskdStatus?.enabled && slskdStatus?.available;
 
   // Filter albums based on hideUpcoming setting and search query
-  const displayedAlbums = (hideUpcoming ? albums.filter(a => !isUpcoming(a)) : albums).filter(
+  const hasDiscogsAlbums = albums.some(a => a.from_discogs);
+  const filteredByTag = discogsOnly ? albums.filter(a => a.from_discogs) : albums;
+  const displayedAlbums = (hideUpcoming ? filteredByTag.filter(a => !isUpcoming(a)) : filteredByTag).filter(
     (album) => {
       const q = search.trim().toLowerCase();
       if (!q) return true;
@@ -134,6 +197,12 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
     const byAdded = compareText(b.created_at, a.created_at);
     return byAdded !== 0 ? byAdded : compareText(a.title, b.title);
   });
+
+  // Albums that can go in a batch: released, and not already queued/started from here.
+  const isSelectable = (album: Album) => !isUpcoming(album) && !downloadingIds.has(album.id);
+  const selectableAlbums = displayedAlbums.filter(isSelectable);
+  const allSelectableSelected =
+    selectableAlbums.length > 0 && selectableAlbums.every(a => selectedIds.has(a.id));
 
   return (
     <>
@@ -171,6 +240,25 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
               />
               <span>Hide upcoming</span>
             </label>
+            {(hasDiscogsAlbums || discogsOnly) && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={discogsOnly}
+                  onChange={(e) => setDiscogsOnly(e.target.checked)}
+                />
+                <span>Discogs only</span>
+              </label>
+            )}
+            {canDownload && (
+              <button
+                className={`secondary-btn batch-select-btn ${selectMode ? 'active' : ''}`}
+                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+                title="Select several albums and download them one at a time"
+              >
+                <span>{selectMode ? 'Done selecting' : 'Select to download'}</span>
+              </button>
+            )}
             <button className="search-albums-btn" onClick={onOpenSearch}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8"/>
@@ -183,6 +271,46 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
       </header>
       
       <div className="content">
+        {batchMessage && (
+          <div className={`batch-message ${batchMessage.isError ? 'error' : ''}`}>
+            <span>{batchMessage.text}</span>
+            <button onClick={() => setBatchMessage(null)} aria-label="Dismiss">&times;</button>
+          </div>
+        )}
+
+        {selectMode && (
+          <div className="batch-bar">
+            <div className="batch-bar-info">
+              <strong>{selectedIds.size}</strong> selected
+              <span className="batch-bar-hint">
+                One download starts every {BATCH_INTERVAL_MINUTES} minutes to avoid a Soulseek ban.
+              </span>
+            </div>
+            <div className="batch-bar-actions">
+              <button
+                className="secondary-btn"
+                onClick={() =>
+                  setSelectedIds(allSelectableSelected ? new Set() : new Set(selectableAlbums.map(a => a.id)))
+                }
+                disabled={selectableAlbums.length === 0}
+              >
+                <span>{allSelectableSelected ? 'Clear selection' : `Select all (${selectableAlbums.length})`}</span>
+              </button>
+              <button
+                className="search-albums-btn"
+                onClick={handleQueueSelected}
+                disabled={selectedIds.size === 0 || queueing}
+              >
+                <span>
+                  {queueing
+                    ? 'Queueing...'
+                    : `Queue ${selectedIds.size} download${selectedIds.size === 1 ? '' : 's'}`}
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="loading">
             <div className="loading-spinner" />
@@ -219,12 +347,32 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
         ) : (
           <div className="albums-grid wishlist-grid">
             {displayedAlbums.map((album) => (
-              <div key={album.id} className="wishlist-album-wrapper">
+              <div
+                key={album.id}
+                className={[
+                  'wishlist-album-wrapper',
+                  selectMode ? 'selecting' : '',
+                  selectMode && !isSelectable(album) ? 'not-selectable' : '',
+                  selectedIds.has(album.id) ? 'selected' : '',
+                ].filter(Boolean).join(' ')}
+              >
                 <AlbumCard
                   album={album}
-                  onClick={() => onAlbumClick(album.id)}
+                  onClick={() => {
+                    if (!selectMode) return onAlbumClick(album.id);
+                    if (isSelectable(album)) toggleSelected(album.id);
+                  }}
                   showWishlistButton={false}
                 />
+                {selectMode && isSelectable(album) && (
+                  <div className="select-check" aria-hidden="true">
+                    {selectedIds.has(album.id) && (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    )}
+                  </div>
+                )}
                 {isUpcoming(album) && (
                   <div className="upcoming-icon" title={`Upcoming: ${album.release_date}`}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -233,7 +381,7 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
                     </svg>
                   </div>
                 )}
-                {canDownload && !isUpcoming(album) && (
+                {canDownload && !selectMode && !isUpcoming(album) && (
                   <button 
                     className={`download-wishlist-btn ${downloadingIds.has(album.id) ? 'downloading' : ''}`}
                     onClick={(e) => handleDownload(e, album.id)}
@@ -253,15 +401,17 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
                     )}
                   </button>
                 )}
-                <button 
-                  className="remove-wishlist-btn"
-                  onClick={(e) => handleRemove(e, album.id)}
-                  title="Remove from wishlist"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 6L6 18M6 6l12 12"/>
-                  </svg>
-                </button>
+                {!selectMode && (
+                  <button 
+                    className="remove-wishlist-btn"
+                    onClick={(e) => handleRemove(e, album.id)}
+                    title="Remove from wishlist"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                  </button>
+                )}
               </div>
             ))}
           </div>

@@ -36,6 +36,8 @@ class Album(Base):
     is_owned = Column(Boolean, default=True)  # True if we have it locally
     is_wishlisted = Column(Boolean, default=False)  # True if user wants this album
     is_scanned = Column(Boolean, default=False)
+    # True if this album is in the user's Discogs collection (set by the Discogs import)
+    from_discogs = Column(Boolean, default=False)
     # AOTY (Album of the Year) data
     critic_score = Column(Integer, nullable=True)  # 0-100 critic score from AOTY
     aoty_url = Column(Text, nullable=True)  # Link to album page on AOTY
@@ -162,7 +164,8 @@ class Download(Base):
     completed_bytes = Column(Integer, default=0)
     
     # Status
-    # pending, searching, downloading, matching, completed, pending_review, failed, moved, cancelled
+    # queued, pending, searching, downloading, matching, completed, pending_review, failed, moved, cancelled
+    # "queued" = waiting in the batch queue; the queue releases one at a time (see slskd.py).
     status = Column(String(50), default="pending")
     error_message = Column(Text, nullable=True)
     
@@ -175,9 +178,25 @@ class Download(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    # When the download left the queue / was (re)started. The stuck-download timeout is
+    # measured from here (falling back to created_at) so a long-queued album isn't
+    # timed out the moment it is released.
+    released_at = Column(DateTime, nullable=True)
     
     # Relationship
     album = relationship("Album")
+
+
+class DownloadQueueState(Base):
+    """
+    Single-row table holding when we last started a Soulseek search. Persisted so the
+    spacing between searches survives restarts - Soulseek bans clients that look like
+    they are flooding the network.
+    """
+    __tablename__ = "download_queue_state"
+
+    id = Column(Integer, primary_key=True)
+    last_search_started_at = Column(DateTime, nullable=True)
 
 
 class VinylRelease(Base):

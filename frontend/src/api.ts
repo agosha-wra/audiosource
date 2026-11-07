@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, SlskdStatus, BannedSlskdUser, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, BatchDownloadResult, DownloadQueueStatus, DiscogsImportStatus, SlskdStatus, BannedSlskdUser, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
 
 const API_BASE = '/api';
 
@@ -149,6 +149,44 @@ export async function getSlskdStatus(): Promise<SlskdStatus> {
 
 export async function getDownloads(): Promise<Download[]> {
   return fetchApi<Download[]>('/downloads');
+}
+
+// Queue several albums; the server starts one every `interval_seconds` (Soulseek rate limit).
+export async function startBatchDownload(albumIds: number[]): Promise<BatchDownloadResult> {
+  return fetchApi<BatchDownloadResult>('/downloads/batch', {
+    method: 'POST',
+    body: JSON.stringify({ album_ids: albumIds }),
+  });
+}
+
+export async function getDownloadQueueStatus(): Promise<DownloadQueueStatus> {
+  return fetchApi<DownloadQueueStatus>('/downloads/queue-status');
+}
+
+// Discogs collection CSV -> wishlist (runs in the background on the server)
+export async function startDiscogsImport(content: string, filename: string): Promise<DiscogsImportStatus> {
+  const response = await fetch(`${API_BASE}/import/discogs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, filename }),
+  });
+  if (!response.ok) {
+    let detail = `API error: ${response.status}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === 'string') detail = body.detail;
+    } catch { /* keep the generic message */ }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+export async function getDiscogsImportStatus(): Promise<DiscogsImportStatus> {
+  return fetchApi<DiscogsImportStatus>('/import/discogs/status');
+}
+
+export async function cancelDiscogsImport(): Promise<{ cancelling: boolean }> {
+  return fetchApi<{ cancelling: boolean }>('/import/discogs/cancel', { method: 'POST' });
 }
 
 export async function getDownload(downloadId: number): Promise<Download> {

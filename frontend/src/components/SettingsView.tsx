@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { AppSettings, BannedSlskdUser } from '../types';
 import { getAppSettings, getBannedUsers, unbanUser } from '../api';
+import DiscogsImport from './DiscogsImport';
 
 // Preset accent colors
 const ACCENT_COLORS = [
@@ -14,7 +15,11 @@ const ACCENT_COLORS = [
   { name: 'Yellow', value: '#eab308', hover: '#ca8a04' },
 ];
 
-export default function SettingsView() {
+interface SettingsViewProps {
+  onWishlistChange?: () => void;
+}
+
+export default function SettingsView({ onWishlistChange }: SettingsViewProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [bannedUsers, setBannedUsers] = useState<BannedSlskdUser[]>([]);
@@ -193,6 +198,17 @@ export default function SettingsView() {
                 ))}
               </div>
             )}
+          </section>
+
+          {/* Discogs import */}
+          <section className="settings-section">
+            <h2>Import from Discogs</h2>
+            <p className="section-description">
+              Upload your Discogs collection export (CSV). Every album that isn't already in your library
+              or wishlist is added to your wishlist. Lookups on MusicBrainz are deliberately slow
+              (about 1.5s each), so a big collection takes a while - you can leave this page while it runs.
+            </p>
+            <DiscogsImport onWishlistChange={onWishlistChange} />
           </section>
 
           {/* About Section */}

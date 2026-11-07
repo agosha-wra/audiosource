@@ -61,6 +61,7 @@ class AlbumResponse(AlbumBase):
     is_owned: bool = True
     is_wishlisted: bool = False
     is_scanned: bool
+    from_discogs: bool = False
     # AOTY data
     critic_score: Optional[int] = None
     aoty_url: Optional[str] = None
@@ -250,6 +251,51 @@ class DownloadResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DiscogsImportRequest(BaseModel):
+    content: str  # raw text of the Discogs collection CSV
+    filename: Optional[str] = None
+
+
+class DiscogsImportStatusResponse(BaseModel):
+    status: str  # idle | running | completed | cancelled | error
+    message: Optional[str] = None
+    filename: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    total_rows: int = 0
+    already_owned: int = 0
+    already_wishlisted: int = 0
+    tagged_existing: int = 0
+    to_lookup: int = 0
+    processed: int = 0
+    added: int = 0
+    added_unmatched: int = 0
+    failed: int = 0
+    current: Optional[str] = None
+    estimated_seconds_left: Optional[int] = None
+    unmatched: List[str] = []
+    failed_items: List[str] = []
+
+
+class BatchDownloadRequest(BaseModel):
+    album_ids: List[int]
+
+
+class BatchDownloadResponse(BaseModel):
+    queued: int
+    skipped: int
+    interval_seconds: int
+    # Human-readable reasons for albums that were not queued
+    skipped_reasons: List[str] = []
+
+
+class DownloadQueueStatusResponse(BaseModel):
+    queued_count: int
+    interval_seconds: int
+    # Seconds until the queue may release its next album (0 = as soon as the loop ticks)
+    seconds_until_next: int
 
 
 class SlskdStatusResponse(BaseModel):

@@ -23,6 +23,8 @@ export interface Album {
   is_owned: boolean;
   is_wishlisted: boolean;
   is_scanned: boolean;
+  // In the user's Discogs collection (set by the Discogs import)
+  from_discogs?: boolean;
   // AOTY data
   critic_score: number | null;
   aoty_url: string | null;
@@ -155,7 +157,7 @@ export interface Download {
   completed_files: number;
   total_bytes: number;
   completed_bytes: number;
-  status: 'pending' | 'searching' | 'downloading' | 'matching' | 'completed' | 'pending_review' | 'failed' | 'moved' | 'cancelled';
+  status: 'queued' | 'pending' | 'searching' | 'downloading' | 'matching' | 'completed' | 'pending_review' | 'failed' | 'moved' | 'cancelled';
   error_message: string | null;
   created_at: string;
   started_at: string | null;
@@ -163,6 +165,40 @@ export interface Download {
   progress_percent: number;
   beets_candidates?: BeetsCandidate[] | null;
   beets_applied_match?: BeetsAppliedMatch | null;
+}
+
+export interface BatchDownloadResult {
+  queued: number;
+  skipped: number;
+  interval_seconds: number;
+  skipped_reasons: string[];
+}
+
+export interface DownloadQueueStatus {
+  queued_count: number;
+  interval_seconds: number;
+  seconds_until_next: number;
+}
+
+export interface DiscogsImportStatus {
+  status: 'idle' | 'running' | 'completed' | 'cancelled' | 'error';
+  message: string | null;
+  filename: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  total_rows: number;
+  already_owned: number;
+  already_wishlisted: number;
+  tagged_existing: number;
+  to_lookup: number;
+  processed: number;
+  added: number;
+  added_unmatched: number;
+  failed: number;
+  current: string | null;
+  estimated_seconds_left: number | null;
+  unmatched: string[];
+  failed_items: string[];
 }
 
 export interface SlskdStatus {

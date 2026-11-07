@@ -459,7 +459,7 @@ function App() {
         )}
 
         {currentView === 'settings' && (
-          <SettingsView />
+          <SettingsView onWishlistChange={handleAlbumAddedToWishlist} />
         )}
       </main>
 
