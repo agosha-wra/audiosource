@@ -43,25 +43,22 @@ class AOTYService:
         scraper.headers.update(self._BROWSER_HEADERS)
         return scraper
 
+    # Newest fingerprints only. Older Chrome/Safari profiles all 403 the same way,
+    # so retrying them just delays the browser attempt.
     _CURL_CFFI_PROFILES = (
-        "chrome120",
-        "chrome110",
-        "chrome107",
-        "chrome104",
-        "chrome101",
-        "chrome99",
-        "safari15_5",
-        "edge101",
+        "chrome136",
+        "chrome133a",
+        "chrome131",
     )
 
     def _fetch_html(self, url: str) -> str:
         """
-        Fetch AOTY HTML, trying several strategies (Cloudflare often blocks Docker IPs).
-        Order: curl_cffi (several TLS profiles) -> cloudscraper -> headless Chromium.
+        Fetch AOTY HTML. Plain HTTP clients are usually 403'd by Cloudflare,
+        so fall through to a real Chromium session that can clear the JS check.
         """
         errors: List[str] = []
+        blocked = 0
 
-        # 1. curl_cffi — try multiple browser TLS fingerprints
         try:
             from curl_cffi import requests as cffi_requests
 
@@ -69,38 +66,28 @@ class AOTYService:
                 try:
                     logger.info(f"[AOTY] Fetching via curl_cffi ({profile}): {url}")
                     with cffi_requests.Session(impersonate=profile) as session:
-                        session.get(f"{self.BASE_URL}/", timeout=30)
-                        time.sleep(0.75)
-                        response = session.get(url, timeout=60)
+                        session.get(f"{self.BASE_URL}/", timeout=20)
+                        time.sleep(0.5)
+                        response = session.get(url, timeout=30)
                     if response.status_code == 200 and self._looks_like_aoty_page(response.text):
                         return response.text
                     errors.append(f"curl_cffi/{profile}: HTTP {response.status_code}")
+                    if response.status_code == 403:
+                        blocked += 1
+                        if blocked >= 2:
+                            break
                 except Exception as profile_error:
                     errors.append(f"curl_cffi/{profile}: {profile_error}")
         except ImportError:
             logger.debug("[AOTY] curl_cffi not installed, skipping")
             errors.append("curl_cffi: not installed")
 
-        # 2. cloudscraper — warm up session with homepage visit first
-        try:
-            logger.info(f"[AOTY] Fetching via cloudscraper: {url}")
-            scraper = self._create_scraper()
-            scraper.get(f"{self.BASE_URL}/", timeout=30)
-            time.sleep(1)
-            response = scraper.get(url, timeout=60)
-            if response.status_code == 200 and self._looks_like_aoty_page(response.text):
-                return response.text
-            errors.append(f"cloudscraper: HTTP {response.status_code}")
-        except Exception as e:
-            errors.append(f"cloudscraper: {e}")
-
-        # 3. Playwright headless browser — slowest but most reliable
         try:
             logger.info(f"[AOTY] Fetching via Playwright: {url}")
             html = self._fetch_with_playwright(url)
             if self._looks_like_aoty_page(html):
                 return html
-            errors.append("playwright: page did not contain expected content")
+            errors.append("playwright: page did not contain album listings")
         except Exception as e:
             errors.append(f"playwright: {e}")
 
@@ -110,45 +97,110 @@ class AOTYService:
         )
 
     @staticmethod
+    def _is_cloudflare_challenge(html: str, title: str = "") -> bool:
+        blob = f"{title}\n{html}".lower()
+        return (
+            "just a moment" in blob
+            or "attention required" in blob
+            or "cf-challenge" in blob
+            or "challenge-platform" in blob
+        )
+
+    @staticmethod
     def _looks_like_aoty_page(html: str) -> bool:
-        """Heuristic check that we got a real AOTY page, not a challenge or error."""
+        """Real album listing, not a Cloudflare interstitial."""
         if not html or len(html) < 500:
             return False
-        lower = html.lower()
-        if "just a moment" in lower and "cloudflare" in lower:
+        if AOTYService._is_cloudflare_challenge(html):
             return False
+        lower = html.lower()
         return "albumoftheyear" in lower and (
-            "albumblock" in lower or "albumtitle" in lower or "releases" in lower
+            "albumblock" in lower or "albumtitle" in lower
         )
 
     def _fetch_with_playwright(self, url: str) -> str:
-        """Load page in headless Chromium and return rendered HTML."""
+        """
+        Load the page in Chromium and wait out Cloudflare's JS check.
+
+        Headless mode is fingerprinted and left sitting on "Just a moment...".
+        When Xvfb is available, run a normal (headed) browser on that display.
+        """
+        import os
+        import shutil
+        import subprocess
         from playwright.sync_api import sync_playwright
 
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
+        xvfb = None
+        display_was_set = "DISPLAY" in os.environ
+        if not display_was_set and shutil.which("Xvfb"):
+            xvfb = subprocess.Popen(
+                ["Xvfb", ":99", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            try:
-                page = browser.new_page(
-                    user_agent=(
-                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    extra_http_headers=self._BROWSER_HEADERS,
+            os.environ["DISPLAY"] = ":99"
+            for _ in range(30):
+                if os.path.exists("/tmp/.X11-unix/X99"):
+                    break
+                time.sleep(0.1)
+
+        headless = xvfb is None and not os.environ.get("DISPLAY")
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(
+                    headless=headless,
+                    ignore_default_args=["--enable-automation"],
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                        "--window-size=1920,1080",
+                    ],
                 )
-                page.goto(f"{self.BASE_URL}/", wait_until="domcontentloaded", timeout=60_000)
-                time.sleep(1)
-                page.goto(url, wait_until="domcontentloaded", timeout=90_000)
                 try:
-                    page.wait_for_selector(".albumBlock", timeout=30_000)
-                except Exception:
-                    # Weekly pages may still be valid without blocks if empty week
-                    pass
-                return page.content()
-            finally:
-                browser.close()
+                    context = browser.new_context(
+                        viewport={"width": 1920, "height": 1080},
+                        locale="en-US",
+                        user_agent=(
+                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+                        ),
+                    )
+                    context.add_init_script(
+                        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                    )
+                    page = context.new_page()
+                    page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+
+                    deadline = time.time() + 90
+                    last_title = ""
+                    attempts = 0
+                    while time.time() < deadline:
+                        attempts += 1
+                        last_title = page.title()
+                        html = page.content()
+                        if self._looks_like_aoty_page(html):
+                            return html
+                        # Give the challenge a few cycles before treating another
+                        # page as a final failure.
+                        if attempts >= 3 and last_title and not self._is_cloudflare_challenge(html, last_title):
+                            break
+                        time.sleep(2)
+
+                    raise RuntimeError(
+                        f"timed out waiting for albums (title={last_title!r})"
+                    )
+                finally:
+                    browser.close()
+        finally:
+            if xvfb is not None:
+                xvfb.terminate()
+                try:
+                    xvfb.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    xvfb.kill()
+                if not display_was_set:
+                    os.environ.pop("DISPLAY", None)
     
     def get_or_create_scrape_status(self) -> NewReleasesScrapeStatus:
         """Get or create the scrape status record."""

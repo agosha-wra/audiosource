@@ -1,4 +1,4 @@
-import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, BatchDownloadResult, DownloadQueueStatus, DiscogsImportStatus, SlskdStatus, BannedSlskdUser, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
+import type { Album, Artist, ScanStatus, Stats, MusicBrainzSearchResult, WishlistAddRequest, UpcomingStatus, NewRelease, NewReleasesScrapeStatus, Download, BatchDownloadResult, DownloadFolderListing, DownloadQueueStatus, DiscogsImportStatus, SlskdStatus, BannedSlskdUser, MetadataMatchCandidate, AppSettings, VinylRelease, VinylReleasesScrapeStatus, BeetsCandidate } from './types';
 
 const API_BASE = '/api';
 
@@ -157,6 +157,33 @@ export async function startBatchDownload(albumIds: number[]): Promise<BatchDownl
     method: 'POST',
     body: JSON.stringify({ album_ids: albumIds }),
   });
+}
+
+async function throwApiError(response: Response): Promise<never> {
+  let detail = `API error: ${response.status}`;
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === 'string') detail = body.detail;
+  } catch { /* keep the generic message */ }
+  throw new Error(detail);
+}
+
+// Browse the downloads directory (for the manual download folder picker)
+export async function getDownloadFolders(path = ''): Promise<DownloadFolderListing> {
+  const response = await fetch(`${API_BASE}/downloads/folders?path=${encodeURIComponent(path)}`);
+  if (!response.ok) return throwApiError(response);
+  return response.json();
+}
+
+// Use a folder from the downloads dir as the source for a wishlisted album
+export async function startManualDownload(albumId: number, folderPath: string): Promise<Download> {
+  const response = await fetch(`${API_BASE}/downloads/manual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ album_id: albumId, folder_path: folderPath }),
+  });
+  if (!response.ok) return throwApiError(response);
+  return response.json();
 }
 
 export async function getDownloadQueueStatus(): Promise<DownloadQueueStatus> {

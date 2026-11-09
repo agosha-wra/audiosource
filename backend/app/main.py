@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime, timedelta
+import os
 import threading
 import asyncio
 
@@ -29,6 +30,8 @@ from app.schemas import (
     BannedSlskdUserResponse,
     BatchDownloadRequest,
     BatchDownloadResponse,
+    ManualDownloadRequest,
+    DownloadFolderListing,
     DiscogsImportRequest,
     DiscogsImportStatusResponse,
     DownloadQueueStatusResponse,
@@ -88,6 +91,13 @@ def run_migrations():
         except Exception as e:
             print(f"Migration check failed (may be normal on first run): {e}")
 
+        # is_manual: download created by pointing an album at a folder in the downloads dir
+        try:
+            conn.execute(text("ALTER TABLE downloads ADD COLUMN IF NOT EXISTS is_manual BOOLEAN NOT NULL DEFAULT FALSE"))
+            conn.commit()
+        except Exception as e:
+            print(f"Migration check failed (may be normal on first run): {e}")
+
         for col in ("slskd_remote_folder", "local_folder_path"):
             try:
                 result = conn.execute(text(
@@ -106,7 +116,7 @@ run_migrations()
 app = FastAPI(
     title="AudioSource",
     description="A music library management application",
-    version="2.0.9",
+    version="2.0.10",
 )
 
 # CORS middleware for frontend
@@ -407,7 +417,7 @@ async def shutdown_event():
 @app.get("/")
 def root():
     """Root endpoint."""
-    return {"message": "AudioSource API", "version": "2.0.9"}
+    return {"message": "AudioSource API", "version": "2.0.10"}
 
 
 @app.get("/api/albums", response_model=List[AlbumResponse])
@@ -1674,6 +1684,43 @@ def get_download_queue_status(db: Session = Depends(get_db)):
     )
 
 
+@app.get("/api/downloads/folders", response_model=DownloadFolderListing)
+def list_download_folders(path: str = "", db: Session = Depends(get_db)):
+    """Browse the downloads directory (folder picker for manual downloads)."""
+    try:
+        return SlskdService(db).list_download_folders(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/downloads/manual", response_model=DownloadResponse)
+def start_manual_download(
+    request: ManualDownloadRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Use a folder that is already in the downloads directory as the source for a
+    wishlisted album. Skips the Soulseek search; tag matching and import run exactly
+    like a normal download (auto-applied when confident, otherwise pending review).
+    """
+    from app.services.slskd import try_start_match, end_match
+
+    service = SlskdService(db)
+    try:
+        download = service.start_manual_download(request.album_id, request.folder_path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Same guard as /move: only one tag lookup per download at a time.
+    if not try_start_match(download.id):
+        db.refresh(download)
+        return _build_download_response(download)
+
+    background_tasks.add_task(run_move_download_in_background, download.id)
+    return _build_download_response(download)
+
+
 def _build_download_response(download: Download) -> DownloadResponse:
     """Helper to build DownloadResponse with parsed beets JSON fields."""
     import json
@@ -1718,6 +1765,7 @@ def _build_download_response(download: Download) -> DownloadResponse:
         started_at=download.started_at,
         completed_at=download.completed_at,
         progress_percent=round(progress, 1),
+        is_manual=bool(download.is_manual),
         beets_candidates=beets_candidates,
         beets_applied_match=beets_applied_match,
     )
@@ -1918,6 +1966,23 @@ def retry_download(
     
     if download.status not in ["failed", "cancelled"]:
         raise HTTPException(status_code=400, detail="Only failed or cancelled downloads can be retried")
+
+    # Manual downloads have no Soulseek source to search for: redo the tag matching
+    # on the folder that was picked.
+    if download.is_manual:
+        from app.services.slskd import try_start_match
+        if not download.local_folder_path or not os.path.isdir(download.local_folder_path):
+            raise HTTPException(status_code=400, detail="The selected folder no longer exists")
+        if not try_start_match(download.id):
+            return _build_download_response(download)
+        download.status = "matching"
+        download.error_message = None
+        download.beets_candidates = None
+        download.beets_applied_match = None
+        db.commit()
+        db.refresh(download)
+        background_tasks.add_task(run_move_download_in_background, download.id)
+        return _build_download_response(download)
     
     # Reset download status
     download.status = "pending"

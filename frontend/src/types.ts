@@ -163,6 +163,7 @@ export interface Download {
   started_at: string | null;
   completed_at: string | null;
   progress_percent: number;
+  is_manual?: boolean;
   beets_candidates?: BeetsCandidate[] | null;
   beets_applied_match?: BeetsAppliedMatch | null;
 }
@@ -172,6 +173,20 @@ export interface BatchDownloadResult {
   skipped: number;
   interval_seconds: number;
   skipped_reasons: string[];
+}
+
+export interface DownloadFolderEntry {
+  name: string;
+  path: string; // relative to the downloads directory
+  audio_count: number;
+  has_subfolders: boolean;
+}
+
+export interface DownloadFolderListing {
+  path: string; // '' = downloads root
+  parent: string | null;
+  audio_count: number;
+  folders: DownloadFolderEntry[];
 }
 
 export interface DownloadQueueStatus {

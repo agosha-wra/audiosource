@@ -398,22 +398,17 @@ class SlskdService:
         self.db.commit()
         
         try:
-            # Search for the album
-            # For self-titled albums, include year if available to disambiguate
+            # Two searches are enough: the quoted form and the "artist - album" form
+            # (a third unquoted variant mostly returned the same results).
+            # For self-titled albums, include year if available to disambiguate.
+            year_suffix = ""
             if is_self_titled and release_year:
                 print(f"slskd: Self-titled album detected, using year {release_year} in search")
-                search_queries = [
-                    f'"{artist_name}" "{album_title}" {release_year}',
-                    f'{artist_name} {album_title} {release_year}',
-                    f'{artist_name} - {album_title} {release_year}',
-                    f'"{artist_name}" "{album_title}"',  # Fallback without year
-                ]
-            else:
-                search_queries = [
-                    f'"{artist_name}" "{album_title}"',
-                    f'{artist_name} {album_title}',
-                    f'{artist_name} - {album_title}',
-                ]
+                year_suffix = f" {release_year}"
+            search_queries = [
+                f'"{artist_name}" "{album_title}"{year_suffix}',
+                f'{artist_name} - {album_title}{year_suffix}',
+            ]
             
             all_candidates = []
             
@@ -1524,7 +1519,13 @@ class SlskdService:
                     file_path = Path(root) / file
                     path_lower = str(file_path).lower()
 
-                    if any(w in path_lower for w in artist_words) or any(w in path_lower for w in album_words):
+                    # A folder the user picked by hand is trusted as-is; the path-word
+                    # filter only guards against broad auto-detected folders.
+                    if (
+                        download.is_manual
+                        or any(w in path_lower for w in artist_words)
+                        or any(w in path_lower for w in album_words)
+                    ):
                         dest_path = target_dir / file
                         try:
                             shutil.move(str(file_path), str(dest_path))
@@ -1549,6 +1550,9 @@ class SlskdService:
         if moved_count > 0:
             download.status = "moved"
             self.db.commit()
+
+            if download.is_manual:
+                self._remove_empty_dirs(source_folder)
             
             # Update album to mark as owned
             if download.album_id:
@@ -1657,6 +1661,145 @@ class SlskdService:
             hand_back_for_review(f"Failed to apply match: {e}")
             return False
     
+    # ------------------------------------------------------------------
+    # Manual downloads: point a wishlisted album at a folder that already sits in
+    # the downloads dir. Everything after that (tag matching, auto-apply / review,
+    # move to library) is the regular flow.
+    # ------------------------------------------------------------------
+
+    def _remove_empty_dirs(self, folder: Path) -> None:
+        """Remove `folder` and its subfolders if they ended up empty (best effort)."""
+        try:
+            for dir_root, _dirs, _files in os.walk(folder, topdown=False):
+                try:
+                    Path(dir_root).rmdir()  # only succeeds when empty
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    def resolve_download_subpath(self, relative_path: str = "") -> Path:
+        """
+        Resolve a path relative to the downloads dir, refusing anything that escapes it.
+        Raises ValueError if the path is invalid or isn't an existing directory.
+        """
+        root = Path(slskd_config.download_dir).resolve()
+        if not root.is_dir():
+            raise ValueError(f"Downloads folder {root} is not available")
+
+        parts = [p for p in re.split(r"[/\\]+", (relative_path or "").strip()) if p]
+        target = root.joinpath(*parts).resolve()
+        if target != root and root not in target.parents:
+            raise ValueError("Folder is outside the downloads directory")
+        if not target.is_dir():
+            raise ValueError("Folder does not exist")
+        return target
+
+    def list_download_folders(self, relative_path: str = "") -> Dict[str, Any]:
+        """List the subfolders of a folder in the downloads dir (for the folder picker)."""
+        root = Path(slskd_config.download_dir).resolve()
+        current = self.resolve_download_subpath(relative_path)
+
+        def rel(p: Path) -> str:
+            return "" if p == root else p.relative_to(root).as_posix()
+
+        folders: List[Dict[str, Any]] = []
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: p.name.lower())
+        except OSError as e:
+            raise ValueError(f"Cannot read folder: {e}")
+
+        for entry in entries:
+            try:
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                has_subfolders = any(
+                    c.is_dir() and not c.name.startswith(".") for c in entry.iterdir()
+                )
+                folders.append({
+                    "name": entry.name,
+                    "path": rel(entry),
+                    "audio_count": self._count_audio_in_folder(entry),
+                    "has_subfolders": has_subfolders,
+                })
+            except OSError:
+                continue
+
+        return {
+            "path": rel(current),
+            "parent": None if current == root else rel(current.parent),
+            "audio_count": self._count_audio_in_folder(current),
+            "folders": folders,
+        }
+
+    def start_manual_download(self, album_id: int, relative_path: str) -> Download:
+        """
+        Create a download for a wishlisted album from a folder already in the downloads
+        dir. The download is returned in status "matching" (the caller must have
+        claimed the match slot with try_start_match) and the tag lookup / import is
+        expected to be run via move_completed_download.
+        Raises ValueError with a user-facing message when the request is invalid.
+        """
+        album = self.db.query(Album).filter(Album.id == album_id).first()
+        if not album:
+            raise ValueError("Album not found")
+        if album.is_owned:
+            raise ValueError("Album is already in your library")
+
+        in_flight = self.db.query(Download).filter(
+            Download.album_id == album_id,
+            Download.status.in_([
+                "queued", "pending", "searching", "downloading",
+                "matching", "completed", "pending_review",
+            ]),
+        ).first()
+        if in_flight:
+            raise ValueError("Album already has a download in progress. Cancel it first.")
+
+        folder = self.resolve_download_subpath(relative_path)
+        if folder == Path(slskd_config.download_dir).resolve():
+            raise ValueError("Pick an album folder, not the downloads root")
+
+        audio_files = [
+            Path(root) / f
+            for root, _dirs, files in os.walk(folder)
+            for f in files
+            if self._is_audio_file(f)
+        ]
+        if not audio_files:
+            raise ValueError("No audio files found in that folder")
+
+        total_bytes = 0
+        for f in audio_files:
+            try:
+                total_bytes += f.stat().st_size
+            except OSError:
+                pass
+
+        now = datetime.utcnow()
+        artist_name = album.artist.name if album.artist else "Unknown Artist"
+        download = Download(
+            album_id=album_id,
+            artist_name=artist_name,
+            album_title=album.title,
+            is_manual=True,
+            local_folder_path=str(folder),
+            total_files=len(audio_files),
+            completed_files=len(audio_files),
+            total_bytes=total_bytes,
+            completed_bytes=total_bytes,
+            status="matching",
+            created_at=now,
+            started_at=now,
+            completed_at=now,
+            released_at=now,
+        )
+        self.db.add(download)
+        self.db.commit()
+        self.db.refresh(download)
+        print(f"slskd: Manual download {download.id} for {artist_name} - {album.title} from {folder}")
+        return download
+
     def get_all_downloads(self) -> List[Download]:
         """Get all downloads ordered by creation date."""
         return self.db.query(Download).order_by(Download.created_at.desc()).all()

@@ -352,6 +352,9 @@ export default function DownloadsView() {
                   {download.slskd_username && (
                     <span className="download-source">from {download.slskd_username}</span>
                   )}
+                  {download.is_manual && (
+                    <span className="download-source">manual folder</span>
+                  )}
                   
                   {download.total_files > 0 && (
                     <span className="download-files">

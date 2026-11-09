@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Album, SlskdStatus } from '../types';
 import { getWishlist, removeFromWishlist, getSlskdStatus, startDownload, startBatchDownload } from '../api';
 import AlbumCard from './AlbumCard';
+import ManualDownloadModal from './ManualDownloadModal';
 
 // Mirrors BATCH_DOWNLOAD_INTERVAL_SECONDS on the server. Only used for wording; the
 // server is what actually enforces the spacing.
@@ -40,6 +41,7 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [queueing, setQueueing] = useState(false);
   const [batchMessage, setBatchMessage] = useState<{ text: string; isError: boolean } | null>(null);
+  const [manualAlbum, setManualAlbum] = useState<Album | null>(null);
 
   const fetchSlskdStatus = useCallback(async () => {
     try {
@@ -101,6 +103,14 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
         return next;
       });
     }
+  };
+
+  const handleManualStarted = (albumId: number) => {
+    setDownloadingIds(prev => new Set(prev).add(albumId));
+    setBatchMessage({
+      text: 'Folder accepted - matching tags now. Follow progress in Downloads.',
+      isError: false,
+    });
   };
 
   const exitSelectMode = () => {
@@ -400,6 +410,20 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
                     </svg>
                   </div>
                 )}
+                {slskdStatus?.enabled && !selectMode && !downloadingIds.has(album.id) && (
+                  <button
+                    className="manual-download-wishlist-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setManualAlbum(album);
+                    }}
+                    title="Use a folder from the downloads directory"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                  </button>
+                )}
                 {canDownload && !selectMode && !isUpcoming(album) && (
                   <button 
                     className={`download-wishlist-btn ${downloadingIds.has(album.id) ? 'downloading' : ''}`}
@@ -436,6 +460,14 @@ export default function WishlistView({ onAlbumClick, onOpenSearch, refreshKey = 
           </div>
         )}
       </div>
+
+      {manualAlbum && (
+        <ManualDownloadModal
+          album={manualAlbum}
+          onClose={() => setManualAlbum(null)}
+          onStarted={handleManualStarted}
+        />
+      )}
     </>
   );
 }

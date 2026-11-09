@@ -158,6 +158,9 @@ class Download(Base):
     slskd_username = Column(String(255), nullable=True)  # User we're downloading from
     slskd_remote_folder = Column(Text, nullable=True)  # Remote path chosen at download start
     local_folder_path = Column(Text, nullable=True)  # Resolved path on disk for this download
+    # True when the user pointed the album at an existing folder in the downloads dir
+    # instead of searching Soulseek (no slskd user / remote folder involved).
+    is_manual = Column(Boolean, default=False, nullable=False, server_default="false")
     total_files = Column(Integer, default=0)
     completed_files = Column(Integer, default=0)
     total_bytes = Column(Integer, default=0)

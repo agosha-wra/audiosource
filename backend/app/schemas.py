@@ -246,6 +246,7 @@ class DownloadResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     progress_percent: float = 0
+    is_manual: bool = False
     beets_candidates: Optional[List[BeetsCandidateResponse]] = None
     beets_applied_match: Optional[BeetsAppliedMatchResponse] = None
 
@@ -289,6 +290,26 @@ class BatchDownloadResponse(BaseModel):
     interval_seconds: int
     # Human-readable reasons for albums that were not queued
     skipped_reasons: List[str] = []
+
+
+class ManualDownloadRequest(BaseModel):
+    album_id: int
+    # Folder path relative to the downloads directory
+    folder_path: str
+
+
+class DownloadFolderEntry(BaseModel):
+    name: str
+    path: str  # relative to the downloads directory
+    audio_count: int
+    has_subfolders: bool
+
+
+class DownloadFolderListing(BaseModel):
+    path: str  # "" = downloads root
+    parent: Optional[str] = None  # None at the root
+    audio_count: int
+    folders: List[DownloadFolderEntry]
 
 
 class DownloadQueueStatusResponse(BaseModel):
