@@ -116,7 +116,7 @@ run_migrations()
 app = FastAPI(
     title="AudioSource",
     description="A music library management application",
-    version="2.0.10",
+    version="2.0.11",
 )
 
 # CORS middleware for frontend
@@ -417,7 +417,7 @@ async def shutdown_event():
 @app.get("/")
 def root():
     """Root endpoint."""
-    return {"message": "AudioSource API", "version": "2.0.10"}
+    return {"message": "AudioSource API", "version": "2.0.11"}
 
 
 @app.get("/api/albums", response_model=List[AlbumResponse])

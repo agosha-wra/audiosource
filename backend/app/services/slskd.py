@@ -411,6 +411,8 @@ class SlskdService:
             ]
             
             all_candidates = []
+            # FLAC folders found in the same searches: only used if nothing lossy turns up.
+            flac_candidates = []
             
             for query in search_queries:
                 if self._is_cancelled(download_id):
@@ -453,15 +455,32 @@ class SlskdService:
                                     "score": score,
                                     "track_count": len(folder_files)
                                 })
+
+                    flac_folders = self._find_matching_files_by_folder(
+                        files, artist_name, album_title, self._LOSSLESS_EXTENSIONS
+                    )
+                    for folder_path, folder_files in flac_folders.items():
+                        if folder_files:
+                            score = self._calculate_score(
+                                folder_files, artist_name, album_title, expected_tracks
+                            )
+                            if score > 0:
+                                flac_candidates.append({
+                                    "username": username,
+                                    "folder": folder_path,
+                                    "files": folder_files,
+                                    "score": score,
+                                    "track_count": len(folder_files)
+                                })
                 
-                # If we have good candidates, stop searching
+                # If we have good (lossy) candidates, stop searching
                 if len(all_candidates) >= 5:
                     break
             
             if self._is_cancelled(download_id):
                 return self._cancelled_result(download)
 
-            if not all_candidates:
+            if not all_candidates and not flac_candidates:
                 download.status = "failed"
                 download.error_message = "No suitable sources found"
                 self.db.commit()
@@ -469,14 +488,19 @@ class SlskdService:
 
             banned = self.get_banned_usernames()
             if banned:
-                before = len(all_candidates)
-                all_candidates = [
-                    c for c in all_candidates
-                    if c["username"].lower() not in banned
-                ]
-                skipped = before - len(all_candidates)
+                def not_banned(candidates):
+                    return [c for c in candidates if c["username"].lower() not in banned]
+
+                skipped = len(all_candidates) + len(flac_candidates)
+                all_candidates = not_banned(all_candidates)
+                flac_candidates = not_banned(flac_candidates)
+                skipped -= len(all_candidates) + len(flac_candidates)
                 if skipped:
                     print(f"slskd: Skipped {skipped} candidate(s) from banned users")
+
+            if not all_candidates and flac_candidates:
+                print(f"slskd: No lossy sources found, falling back to {len(flac_candidates)} FLAC candidate folder(s)")
+                all_candidates = flac_candidates
 
             if not all_candidates:
                 download.status = "failed"
@@ -562,14 +586,20 @@ class SlskdService:
             parts = filename.rsplit('/', 1)
         return parts[0] if len(parts) > 1 else ""
     
+    # Lossy formats are preferred (smaller); FLAC is only used when nothing lossy is found.
+    _LOSSY_EXTENSIONS = (".mp3", ".m4a", ".ogg")
+    _LOSSLESS_EXTENSIONS = (".flac",)
+
     def _find_matching_files_by_folder(
         self,
         files: List[Dict],
         artist_name: str,
-        album_title: str
+        album_title: str,
+        extensions: Optional[tuple] = None,
     ) -> Dict[str, List[Dict]]:
         """Find audio files that match the artist/album, grouped by folder."""
         folders: Dict[str, List[Dict]] = {}
+        extensions = extensions or self._LOSSY_EXTENSIONS
         
         artist_words = [w.lower() for w in artist_name.split() if len(w) > 2]
         title_words = [w.lower() for w in album_title.split() if len(w) > 2]
@@ -577,8 +607,7 @@ class SlskdService:
         for file_info in files:
             filename = file_info.get("filename", "").lower()
             
-            # Check if it's an audio file (prefer MP3, exclude FLAC for size)
-            if any(ext in filename for ext in [".mp3", ".m4a", ".ogg"]):
+            if any(ext in filename for ext in extensions):
                 artist_match = any(w in filename for w in artist_words)
                 title_match = any(w in filename for w in title_words)
                 
